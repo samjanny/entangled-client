@@ -29,12 +29,16 @@
 
 pub mod chrome;
 pub mod history;
+pub mod image;
 pub mod io;
 pub mod pipeline;
 pub mod trust;
 
 pub use chrome::{ChromeConditions, ChromeView, Warning, PIP_LABEL};
 pub use history::{check_against_history, record_for, PublisherHistory};
+pub use image::{
+    verify_image, DecodeError, Decoded, Decoder, ImageBudget, ImageOutcome, NoRetrySet,
+};
 pub use io::{Clock, FixedClock};
 pub use pipeline::{verify_content, verify_manifest, Outcome, VerifiedManifest};
 pub use trust::{
