@@ -107,23 +107,48 @@ struct App {
     loaded: Loaded,
 }
 
+/// Background for the chrome panel: a distinct, slightly tinted dark fill with
+/// a separating bottom stroke, so the client-controlled chrome is visibly
+/// separate from the publisher content (section 10 chrome separation).
+fn chrome_frame() -> egui::Frame {
+    egui::Frame::none()
+        .fill(egui::Color32::from_rgb(0x1c, 0x22, 0x2c))
+        .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+        .stroke(egui::Stroke::new(
+            1.0,
+            egui::Color32::from_rgb(0x3a, 0x44, 0x52),
+        ))
+}
+
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Chrome: a client-controlled top panel, structurally separate from the
-        // content area below. Publisher content never draws here.
-        egui::TopBottomPanel::top("chrome").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(NOT_A_CLIENT).small().italics());
+        // content area below. Its distinct frame makes the boundary visible.
+        // Publisher content never draws here.
+        egui::TopBottomPanel::top("chrome")
+            .frame(chrome_frame())
+            .show(ctx, |ui| {
+                draw_chrome(ui, &self.loaded.chrome);
             });
-            draw_chrome(ui, &self.loaded.chrome);
-        });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| match &self.loaded.scene {
-                Some(scene) => draw_scene(ui, scene),
-                None => {
-                    ui.label("(manifest only - no content document loaded)");
-                }
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                // Constrain content to a readable column rather than the full
+                // window width, and give it breathing room.
+                ui.add_space(8.0);
+                let max_width = 720.0_f32.min(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.add_space(((ui.available_width() - max_width) / 2.0).max(0.0));
+                    ui.vertical(|ui| {
+                        ui.set_max_width(max_width);
+                        match &self.loaded.scene {
+                            Some(scene) => draw_scene(ui, scene),
+                            None => {
+                                ui.label("(manifest only - no content document loaded)");
+                            }
+                        }
+                    });
+                });
             });
         });
     }
@@ -131,47 +156,77 @@ impl eframe::App for App {
 
 /// Draw the always-visible chrome indicators and any conditional warnings.
 fn draw_chrome(ui: &mut egui::Ui, chrome: &ChromeView) {
+    // Honest banner: this is a viewer, not a conforming client (yet).
+    ui.label(
+        egui::RichText::new(NOT_A_CLIENT)
+            .small()
+            .color(egui::Color32::from_rgb(0xC0, 0x80, 0x00)),
+    );
+    ui.add_space(4.0);
+
+    // Always-visible compact indicators (section 10), with semantic color.
     ui.horizontal_wrapped(|ui| {
-        ui.label(egui::RichText::new(trust_label(chrome.trust_state)).strong());
+        let (label, color) = trust_label(chrome.trust_state);
+        ui.label(egui::RichText::new(label).strong().color(color));
         ui.separator();
-        ui.label(&chrome.carrier_address_compact);
+        ui.label(egui::RichText::new(&chrome.carrier_address_compact).monospace());
         ui.separator();
-        ui.label(canary_label(chrome.canary_state));
+        let (clabel, ccolor) = canary_label(chrome.canary_state);
+        ui.label(egui::RichText::new(clabel).color(ccolor));
     });
-    // PIP, labeled as public identity (never "seed phrase"), shown in full.
-    ui.collapsing(chrome.pip_label, |ui| {
+
+    // PIP, labeled as public identity (never "seed phrase"). Section 10 (304,
+    // 687): at First contact and Changed/mismatch the user is being asked to
+    // verify identity, so the full 24-word PIP MUST be shown, not only
+    // collapsed. In the other states it may stay behind an expand control.
+    ui.add_space(2.0);
+    if chrome.pip_must_be_fully_shown {
+        ui.label(egui::RichText::new(chrome.pip_label).small());
         ui.monospace(&chrome.pip);
-    });
+    } else {
+        ui.collapsing(chrome.pip_label, |ui| {
+            ui.monospace(&chrome.pip);
+        });
+    }
+
     for warning in &chrome.warnings {
-        ui.colored_label(
-            egui::Color32::from_rgb(0xD0, 0x40, 0x40),
-            warning_label(*warning),
+        ui.label(
+            egui::RichText::new(warning_label(*warning))
+                .strong()
+                .color(egui::Color32::from_rgb(0xE0, 0x50, 0x50)),
         );
     }
     if chrome.request_state_active {
-        ui.colored_label(
-            egui::Color32::from_rgb(0xC0, 0x80, 0x00),
-            "request state active",
+        ui.label(
+            egui::RichText::new("request state active")
+                .color(egui::Color32::from_rgb(0xC0, 0x80, 0x00)),
         );
     }
 }
 
-fn trust_label(state: TrustState) -> &'static str {
+fn trust_label(state: TrustState) -> (&'static str, egui::Color32) {
+    let green = egui::Color32::from_rgb(0x4c, 0xc0, 0x6a);
+    let yellow = egui::Color32::from_rgb(0xd0, 0xa0, 0x30);
+    let red = egui::Color32::from_rgb(0xe0, 0x50, 0x50);
     match state {
-        TrustState::ExternallyVerified => "trust: externally verified",
-        TrustState::TofuPinned => "trust: TOFU pinned",
-        TrustState::FirstContact => "trust: first contact",
-        TrustState::ChangedMismatch => "trust: CHANGED / MISMATCH",
+        TrustState::ExternallyVerified => ("trust: externally verified", green),
+        TrustState::TofuPinned => ("trust: TOFU pinned", green),
+        TrustState::FirstContact => ("trust: first contact", yellow),
+        TrustState::ChangedMismatch => ("trust: CHANGED / MISMATCH", red),
     }
 }
 
-fn canary_label(state: CanaryState) -> &'static str {
+fn canary_label(state: CanaryState) -> (&'static str, egui::Color32) {
+    let green = egui::Color32::from_rgb(0x4c, 0xc0, 0x6a);
+    let yellow = egui::Color32::from_rgb(0xd0, 0xa0, 0x30);
+    let red = egui::Color32::from_rgb(0xe0, 0x50, 0x50);
+    let gray = egui::Color32::from_rgb(0x90, 0x98, 0xa4);
     match state {
-        CanaryState::Fresh => "canary: fresh",
-        CanaryState::NearExpiration => "canary: near expiration",
-        CanaryState::Expired => "canary: expired",
-        CanaryState::Invalid => "canary: invalid",
-        CanaryState::Unavailable => "canary: unavailable",
+        CanaryState::Fresh => ("canary: fresh", green),
+        CanaryState::NearExpiration => ("canary: near expiration", yellow),
+        CanaryState::Expired => ("canary: expired", red),
+        CanaryState::Invalid => ("canary: invalid", red),
+        CanaryState::Unavailable => ("canary: unavailable", gray),
     }
 }
 

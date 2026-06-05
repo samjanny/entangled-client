@@ -80,6 +80,11 @@ pub struct ChromeView {
     pub pip_label: &'static str,
     /// The complete 24-word Publisher Identity Phrase. Never truncated.
     pub pip: String,
+    /// Whether the full PIP MUST be shown (not merely collapsed behind an
+    /// expand control). Section 10 requires this when the user is being asked
+    /// to verify identity - at First contact and during Changed/mismatch
+    /// resolution. In other states the shell MAY collapse it.
+    pub pip_must_be_fully_shown: bool,
     /// The conditional warnings currently in effect, in a stable order.
     pub warnings: Vec<Warning>,
     /// Whether the request-state indicator is shown.
@@ -126,12 +131,20 @@ impl ChromeView {
             warnings.push(Warning::StaleCachedContent);
         }
 
+        // Section 10 (304, 687): at First contact and Changed/mismatch the user
+        // is being asked to verify identity, so the full PIP must be shown.
+        let pip_must_be_fully_shown = matches!(
+            trust_state,
+            TrustState::FirstContact | TrustState::ChangedMismatch
+        );
+
         ChromeView {
             trust_state,
             carrier_address_compact: carrier_address_compact.into(),
             canary_state,
             pip_label: PIP_LABEL,
             pip: derive_pip(publisher),
+            pip_must_be_fully_shown,
             warnings,
             request_state_active: conditions.request_state_active,
         }

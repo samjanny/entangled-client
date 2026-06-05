@@ -74,6 +74,27 @@ fn changed_mismatch_surfaces_a_trust_warning() {
 }
 
 #[test]
+fn pip_must_be_fully_shown_at_first_contact_and_mismatch_only() {
+    // Section 10: the full PIP must be shown (not just collapsed) when the user
+    // is being asked to verify identity - First contact and Changed/mismatch.
+    for state in [TrustState::FirstContact, TrustState::ChangedMismatch] {
+        let v = view(state, CanaryState::Fresh, ChromeConditions::default());
+        assert!(
+            v.pip_must_be_fully_shown,
+            "PIP must be fully shown in {state:?}"
+        );
+    }
+    // In the retained states it MAY be collapsed.
+    for state in [TrustState::TofuPinned, TrustState::ExternallyVerified] {
+        let v = view(state, CanaryState::Fresh, ChromeConditions::default());
+        assert!(
+            !v.pip_must_be_fully_shown,
+            "PIP may be collapsed in {state:?}"
+        );
+    }
+}
+
+#[test]
 fn expired_and_invalid_canary_surface_their_warnings() {
     let expired = view(
         TrustState::TofuPinned,
