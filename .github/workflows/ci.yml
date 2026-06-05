@@ -54,10 +54,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: entangled-client
+      # `cargo fmt --all` runs `cargo metadata`, which must resolve the
+      # entangled-core path dependency, so the sibling repo is needed even here.
+      - name: Checkout entangled-api (path dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: samjanny/entangled-api
+          path: entangled-api
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - run: cargo fmt --all --check
+      - name: Rustfmt
+        working-directory: entangled-client
+        run: cargo fmt --all --check
 
   clippy:
     name: Clippy
