@@ -9,12 +9,11 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
-# entangled-client depends on entangled-core through a path dependency
-# (../entangled-api/entangled-core, relative to the workspace root). CI lays out
-# both repositories as siblings so the path resolves: this repo is checked out
-# under entangled-client/ and the entangled-api repo alongside it under
-# entangled-api/. (entangled-engine is added as a sibling here once the GUI
-# member starts consuming it.)
+# entangled-client depends on entangled-core (../entangled-api/entangled-core)
+# and, since the GUI member, on entangled-engine (../entangled-engine), both as
+# path dependencies relative to the workspace root. CI lays the repositories out
+# as siblings so the paths resolve: this repo under entangled-client/, with
+# entangled-api/ and entangled-engine/ alongside it.
 jobs:
   test:
     name: Test ${{ matrix.os }} / ${{ matrix.rust }}
@@ -36,6 +35,11 @@ jobs:
         with:
           repository: samjanny/entangled-api
           path: entangled-api
+      - name: Checkout entangled-engine (path dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: samjanny/entangled-engine
+          path: entangled-engine
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
@@ -63,6 +67,11 @@ jobs:
         with:
           repository: samjanny/entangled-api
           path: entangled-api
+      - name: Checkout entangled-engine (path dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: samjanny/entangled-engine
+          path: entangled-engine
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -82,6 +91,11 @@ jobs:
         with:
           repository: samjanny/entangled-api
           path: entangled-api
+      - name: Checkout entangled-engine (path dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: samjanny/entangled-engine
+          path: entangled-engine
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -106,6 +120,11 @@ jobs:
         with:
           repository: samjanny/entangled-api
           path: entangled-api
+      - name: Checkout entangled-engine (path dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: samjanny/entangled-engine
+          path: entangled-engine
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -140,6 +159,11 @@ jobs:
         with:
           repository: samjanny/entangled-api
           path: entangled-api
+      - name: Checkout entangled-engine (path dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: samjanny/entangled-engine
+          path: entangled-engine
       - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
         with:

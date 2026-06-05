@@ -1,0 +1,36 @@
+[package]
+name = "entangled-client-gui"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "egui shell for the Entangled v1.0 client: renders a verified document's content (Scene) and the chrome (ChromeView). Read-only viewer for now; not yet a conforming client."
+readme = "README.md"
+keywords = ["entangled", "egui", "client", "gui", "tor"]
+categories = ["gui"]
+
+# The crate is split: the `lib` holds the pure `load` (file -> verified Scene +
+# ChromeView), testable without a window; the `entangled-client-gui` binary is
+# the thin eframe/egui shell that draws them.
+[lib]
+name = "entangled_client_gui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "entangled-client-gui"
+path = "src/main.rs"
+
+[dependencies]
+entangled-core = { workspace = true }
+entangled-engine = { workspace = true }
+entangled-client = { path = "../entangled-client" }
+eframe = "0.29"
+egui = "0.29"
+
+[dev-dependencies]
+# Used by the load test to derive a Tor v3 onion address from an origin pubkey,
+# so a built manifest passes Stage 9 origin binding.
+data-encoding = "2"
+sha3 = "0.10"
