@@ -49,11 +49,18 @@ fn main() -> ExitCode {
         }
     };
 
-    let options = eframe::NativeOptions::default();
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 680.0]),
+        ..Default::default()
+    };
     match eframe::run_native(
         "entangled-client",
         options,
-        Box::new(|_cc| Ok(Box::new(App::new(loaded)))),
+        Box::new(|cc| {
+            install_fonts(&cc.egui_ctx);
+            install_theme(&cc.egui_ctx);
+            Ok(Box::new(App::new(loaded)))
+        }),
     ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -61,6 +68,90 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// A named font family for bold runs (egui's built-in families are only
+/// Proportional and Monospace; we register a third for the bold weight).
+fn bold_family() -> egui::FontFamily {
+    egui::FontFamily::Name("bold".into())
+}
+
+/// Install the embedded DejaVu fonts: DejaVu Sans as the proportional default,
+/// DejaVu Sans Mono as the monospace family, and DejaVu Sans Bold under a named
+/// "bold" family so bold runs render with a real bold weight.
+fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "dejavu".to_owned(),
+        egui::FontData::from_static(include_bytes!("../assets/DejaVuSans.ttf")),
+    );
+    fonts.font_data.insert(
+        "dejavu-bold".to_owned(),
+        egui::FontData::from_static(include_bytes!("../assets/DejaVuSans-Bold.ttf")),
+    );
+    fonts.font_data.insert(
+        "dejavu-mono".to_owned(),
+        egui::FontData::from_static(include_bytes!("../assets/DejaVuSansMono.ttf")),
+    );
+    fonts
+        .families
+        .entry(egui::FontFamily::Proportional)
+        .or_default()
+        .insert(0, "dejavu".to_owned());
+    fonts
+        .families
+        .entry(egui::FontFamily::Monospace)
+        .or_default()
+        .insert(0, "dejavu-mono".to_owned());
+    fonts
+        .families
+        .insert(bold_family(), vec!["dejavu-bold".to_owned()]);
+    ctx.set_fonts(fonts);
+}
+
+/// Tune egui visuals: a coherent dark palette, comfortable text sizes, and
+/// rounded widgets, so the shell reads as an intentional app rather than the
+/// default debug-UI look.
+fn install_theme(ctx: &egui::Context) {
+    let mut style = (*ctx.style()).clone();
+
+    use egui::{FontFamily, FontId, TextStyle};
+    style.text_styles = [
+        (
+            TextStyle::Heading,
+            FontId::new(22.0, FontFamily::Proportional),
+        ),
+        (TextStyle::Body, FontId::new(15.0, FontFamily::Proportional)),
+        (
+            TextStyle::Monospace,
+            FontId::new(14.0, FontFamily::Monospace),
+        ),
+        (
+            TextStyle::Button,
+            FontId::new(15.0, FontFamily::Proportional),
+        ),
+        (
+            TextStyle::Small,
+            FontId::new(12.0, FontFamily::Proportional),
+        ),
+    ]
+    .into();
+
+    let mut v = egui::Visuals::dark();
+    v.panel_fill = egui::Color32::from_rgb(0x12, 0x15, 0x1a);
+    v.widgets.noninteractive.rounding = 6.0.into();
+    v.widgets.inactive.rounding = 6.0.into();
+    v.widgets.hovered.rounding = 6.0.into();
+    v.widgets.active.rounding = 6.0.into();
+    v.window_rounding = 8.0.into();
+    v.hyperlink_color = egui::Color32::from_rgb(0x6c, 0xa8, 0xff);
+    v.selection.bg_fill = egui::Color32::from_rgb(0x2a, 0x40, 0x60);
+    style.visuals = v;
+
+    style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+    style.spacing.button_padding = egui::vec2(10.0, 5.0);
+
+    ctx.set_style(style);
 }
 
 /// Read the files and run the pure `load`. Errors are strings for the CLI.
@@ -77,30 +168,20 @@ fn build(
     };
     let address =
         OnionAddress::try_from(onion).map_err(|e| format!("invalid onion address: {e:?}"))?;
-    let compact = compact_onion(onion);
     // A real client supplies wall-clock time; this viewer uses a fixed instant
     // so the load is deterministic. (A later tranche wires a real clock.)
     let clock = FixedClock(
         EntangledTimestamp::try_from("2026-06-05T00:00:00Z").expect("valid fixed timestamp"),
     );
+    // Show the full onion address in chrome (there is room horizontally).
     load(
         &manifest_bytes,
         content_bytes.as_deref(),
         &address,
-        compact,
+        onion.to_owned(),
         &clock,
     )
     .map_err(|e| e.to_string())
-}
-
-/// A short, distinguishable form of an onion address for the chrome indicator.
-fn compact_onion(onion: &str) -> String {
-    let stem = onion.strip_suffix(".onion").unwrap_or(onion);
-    if stem.len() > 12 {
-        format!("{}...{}.onion", &stem[..6], &stem[stem.len() - 6..])
-    } else {
-        onion.to_owned()
-    }
 }
 
 struct App {
@@ -133,10 +214,6 @@ fn chrome_frame() -> egui::Frame {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // egui's default text is small on modern displays; scale everything up
-        // a touch for comfortable reading. Set once per frame (idempotent).
-        ctx.set_zoom_factor(1.1);
-
         // Chrome: a client-controlled top panel, structurally separate from the
         // content area below. Its distinct frame makes the boundary visible.
         // Publisher content never draws here.
@@ -206,11 +283,19 @@ impl App {
                 ui.label(egui::RichText::new(&url).monospace());
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Copy URL").clicked() {
+                    if ui
+                        .button("Copy URL")
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
                         ui.ctx().copy_text(url.clone());
                         close = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui
+                        .button("Cancel")
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
                         close = true;
                     }
                 });
@@ -236,26 +321,63 @@ fn draw_chrome(ui: &mut egui::Ui, chrome: &ChromeView) {
         let (label, color) = trust_label(chrome.trust_state);
         ui.label(egui::RichText::new(label).strong().color(color));
         ui.separator();
-        ui.label(egui::RichText::new(&chrome.carrier_address_compact).monospace());
-        ui.separator();
         let (clabel, ccolor) = canary_label(chrome.canary_state);
         ui.label(egui::RichText::new(clabel).color(ccolor));
     });
+    ui.add_space(6.0);
 
-    // PIP, labeled as public identity (never "seed phrase"). Section 10 (304,
-    // 687): at First contact and Changed/mismatch the user is being asked to
-    // verify identity, so the full 24-word PIP MUST be shown, not only
-    // collapsed. In the other states it may stay behind an expand control.
-    ui.add_space(2.0);
+    // The full carrier address, in monospace on its own line so it is never
+    // truncated.
+    ui.label(
+        egui::RichText::new(&chrome.carrier_address_compact)
+            .monospace()
+            .color(egui::Color32::from_rgb(0xB0, 0xB8, 0xC4)),
+    );
+    ui.add_space(8.0);
+
+    // PIP, labeled as public identity with the acronym (never "seed phrase").
+    // Section 10 (304, 687): at First contact and Changed/mismatch the user is
+    // being asked to verify identity, so the full 24-word PIP MUST be shown,
+    // not only collapsed. In the other states it may stay behind an expand
+    // control. The PIP is the identity anchor the user compares out of band, so
+    // give it visual prominence.
+    let pip_label = format!("{} (PIP)", chrome.pip_label);
+    let pip_color = egui::Color32::from_rgb(0xE6, 0xEA, 0xF0);
+    let pip_text = || {
+        egui::RichText::new(&chrome.pip)
+            .monospace()
+            .size(15.0)
+            .color(pip_color)
+    };
     if chrome.pip_must_be_fully_shown {
-        ui.label(egui::RichText::new(chrome.pip_label).small());
-        ui.monospace(&chrome.pip);
+        // A dedicated, distinct box so the identity phrase stands out.
+        egui::Frame::none()
+            .fill(egui::Color32::from_rgb(0x22, 0x2a, 0x36))
+            .stroke(egui::Stroke::new(
+                1.0,
+                egui::Color32::from_rgb(0x3a, 0x48, 0x5c),
+            ))
+            .rounding(6.0)
+            .inner_margin(egui::Margin::same(8.0))
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new(&pip_label)
+                        .small()
+                        .strong()
+                        .color(egui::Color32::from_rgb(0xA8, 0xB4, 0xC4)),
+                );
+                ui.add_space(4.0);
+                ui.label(pip_text());
+            });
     } else {
-        ui.collapsing(chrome.pip_label, |ui| {
-            ui.monospace(&chrome.pip);
+        ui.collapsing(pip_label, |ui| {
+            ui.label(pip_text());
         });
     }
 
+    if !chrome.warnings.is_empty() {
+        ui.add_space(6.0);
+    }
     for warning in &chrome.warnings {
         ui.label(
             egui::RichText::new(warning_label(*warning))
@@ -264,6 +386,7 @@ fn draw_chrome(ui: &mut egui::Ui, chrome: &ChromeView) {
         );
     }
     if chrome.request_state_active {
+        ui.add_space(6.0);
         ui.label(
             egui::RichText::new("request state active")
                 .color(egui::Color32::from_rgb(0xC0, 0x80, 0x00)),
@@ -435,6 +558,7 @@ fn draw_node(ui: &mut egui::Ui, node: &SceneNode, handoff: &mut Option<String>) 
                 Some(url) => {
                     if ui
                         .add(egui::Label::new(job).sense(egui::Sense::click()))
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
                     {
                         *handoff = Some(url);
@@ -522,21 +646,21 @@ fn runs_job(
             InlineRun::Text { text, style } => (text, style, false),
             InlineRun::Link { text, style, .. } => (text, style, true),
         };
+        // Code is monospace; bold (when not code) uses the real bold family;
+        // everything else is the proportional default. The run keeps its real
+        // color in every case.
         let family = if style.code {
             egui::FontFamily::Monospace
+        } else if style.bold {
+            bold_family()
         } else {
             egui::FontFamily::Proportional
         };
-        let mut color = if is_link {
+        let color = if is_link {
             egui::Color32::from_rgb(0x6c, 0xa8, 0xff)
         } else {
             base_color
         };
-        // egui has no bold weight without a bold font; approximate with a
-        // brighter color so bold runs are visibly distinct.
-        if style.bold {
-            color = egui::Color32::from_rgb(0xFF, 0xFF, 0xFF);
-        }
         let mut fmt = egui::TextFormat {
             font_id: egui::FontId::new(base_size, family),
             color,
