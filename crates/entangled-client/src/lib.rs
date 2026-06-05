@@ -27,11 +27,13 @@
 #![deny(rust_2018_idioms)]
 #![deny(missing_docs)]
 
+pub mod chrome;
 pub mod history;
 pub mod io;
 pub mod pipeline;
 pub mod trust;
 
+pub use chrome::{ChromeConditions, ChromeView, Warning, PIP_LABEL};
 pub use history::{check_against_history, record_for, PublisherHistory};
 pub use io::{Clock, FixedClock};
 pub use pipeline::{verify_content, verify_manifest, Outcome, VerifiedManifest};
