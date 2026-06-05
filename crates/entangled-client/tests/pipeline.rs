@@ -18,7 +18,7 @@ use entangled_core::validation::canary::CanaryState;
 use entangled_core::validation::DiagnosticCode;
 use sha3::{Digest, Sha3_256};
 
-use entangled_client::{verify_content, verify_manifest, FixedClock, Outcome};
+use entangled_client::{verify_content, verify_manifest, FixedClock, Outcome, PublisherHistory};
 
 fn ts(s: &str) -> EntangledTimestamp {
     EntangledTimestamp::try_from(s).expect("valid timestamp")
@@ -84,7 +84,7 @@ fn manifest_accepts_and_is_fresh() {
     let (bytes, onion, _rt) = fixture();
     let clock = FixedClock(ts("2026-05-07T00:00:00Z"));
 
-    let outcome = verify_manifest(&bytes, &onion, None, &clock);
+    let outcome = verify_manifest(&bytes, &onion, None, &clock, &PublisherHistory::new());
     match outcome {
         Outcome::Accept(verified) => {
             assert_eq!(verified.canary_state, CanaryState::Fresh);
@@ -102,7 +102,7 @@ fn wrong_origin_address_rejects_at_stage_9() {
     let other = OnionAddress::try_from(onion_for(&[0x77; 32]).as_str()).expect("onion");
     let clock = FixedClock(ts("2026-05-07T00:00:00Z"));
 
-    let outcome = verify_manifest(&bytes, &other, None, &clock);
+    let outcome = verify_manifest(&bytes, &other, None, &clock, &PublisherHistory::new());
     assert!(
         !outcome.is_accepted(),
         "manifest must be rejected on origin mismatch"
@@ -117,7 +117,7 @@ fn wrong_origin_address_rejects_at_stage_9() {
 fn content_verifies_under_manifest_runtime_key() {
     let (bytes, onion, runtime_key) = fixture();
     let clock = FixedClock(ts("2026-05-07T00:00:00Z"));
-    let verified = match verify_manifest(&bytes, &onion, None, &clock) {
+    let verified = match verify_manifest(&bytes, &onion, None, &clock, &PublisherHistory::new()) {
         Outcome::Accept(v) => v,
         Outcome::Reject(d) => panic!("manifest rejected: {d:?}"),
     };
@@ -151,7 +151,7 @@ fn content_verifies_under_manifest_runtime_key() {
 fn content_signed_by_wrong_key_rejects() {
     let (bytes, onion, _rt) = fixture();
     let clock = FixedClock(ts("2026-05-07T00:00:00Z"));
-    let verified = match verify_manifest(&bytes, &onion, None, &clock) {
+    let verified = match verify_manifest(&bytes, &onion, None, &clock, &PublisherHistory::new()) {
         Outcome::Accept(v) => v,
         Outcome::Reject(d) => panic!("manifest rejected: {d:?}"),
     };

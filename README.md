@@ -56,6 +56,23 @@ Built in tranches, each a shippable increment toward full section 10 conformance
 Transport (Tor), filesystem persistence, and image decode all sit behind traits,
 so the brain stays testable without any of them.
 
+## Security posture
+
+A goal of this client is to be **OS-sandboxable** (seccomp-bpf, namespaces,
+`bubblewrap`/`firejail`, platform sandboxes) as defence in depth: it processes
+authenticated-but-potentially-hostile publisher content over a hostile network.
+The architecture is built to make that practical - the pure brain performs no
+I/O and touches no syscalls, and every resource access (clock, transport,
+persistence, image decode) goes through a trait whose implementation lives in
+the shell. The syscall surface to confine is therefore exactly the shell's trait
+impls. A CI guard rejects `std::net` / `std::fs` / `SystemTime` / toolkit imports
+in the brain crate so this property cannot erode.
+
+The spec does not mandate a process sandbox; section 03 separately recommends
+isolating the image decoder (hash verification authenticates bytes but does not
+make decoding safe). A concrete seccomp/bubblewrap profile and decoder isolation
+are documented as the shell and image tranches land.
+
 ## Building
 
 ```sh
@@ -65,8 +82,9 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-Requires the sibling repos `entangled-api` and `entangled-engine` checked out
-alongside this one (the path dependencies in `Cargo.toml` assume that layout).
+Requires the sibling repo `entangled-api` checked out alongside this one (the
+path dependency in `Cargo.toml` assumes that layout). `entangled-engine` joins
+as a sibling once the GUI member consumes the Scene IR.
 
 ## License
 

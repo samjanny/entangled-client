@@ -18,6 +18,7 @@ use entangled_core::types::{ContentDocument, Manifest, OnionAddress, RuntimePubk
 use entangled_core::validation::canary::CanaryState;
 use entangled_core::validation::{ContentIndex, Diagnostic};
 
+use crate::history::{check_against_history, PublisherHistory};
 use crate::io::Clock;
 
 /// The result of driving a document through the pipeline.
@@ -73,8 +74,9 @@ impl VerifiedManifest {
 }
 
 /// Drive a manifest through the pipeline: signature (Stage 6), canary
-/// (Stage 8), origin binding (Stage 9), and the content-index sub-step
-/// (Stage 9b) when `content_root` is present.
+/// (Stage 8) including the anti-downgrade / conflict / runtime-rotation checks
+/// against publisher history, origin binding (Stage 9), and the content-index
+/// sub-step (Stage 9b) when `content_root` is present.
 ///
 /// - `manifest_bytes`: the exact wire bytes fetched for `/manifest.json`.
 /// - `fetched_address`: the carrier address the manifest was fetched from, for
@@ -83,6 +85,9 @@ impl VerifiedManifest {
 ///   manifest declares `content_root`, else `None` (a `None` against a declared
 ///   `content_root` is the section 09 hard-fail, surfaced as a rejection).
 /// - `clock`: the current-time source for canary and `not_after` checks.
+/// - `history`: what the client has already accepted for this publisher; pass
+///   an empty [`PublisherHistory`] on first contact. The anti-downgrade,
+///   equal-`issued_at` conflict, and runtime-rotation checks run against it.
 ///
 /// Stage 1 (transport) and Stage 7 (trust state) are out of this tranche.
 pub fn verify_manifest(
@@ -90,23 +95,30 @@ pub fn verify_manifest(
     fetched_address: &OnionAddress,
     content_index_bytes: Option<&[u8]>,
     clock: &impl Clock,
+    history: &PublisherHistory,
 ) -> Outcome<VerifiedManifest> {
     let now = clock.now();
     let result = parse_and_verify_manifest(manifest_bytes, &now)
         .and_then(|sig_verified| sig_verified.verify_canary(&now))
         .and_then(|canary_checked| canary_checked.verify_origin(fetched_address, &now))
         .and_then(|origin_bound| origin_bound.verify_content_index(content_index_bytes));
-    match result {
-        Ok(verified) => {
-            let (manifest, canary_state, content_index) = verified.into_parts();
-            Outcome::Accept(VerifiedManifest {
-                manifest,
-                canary_state,
-                content_index,
-            })
-        }
-        Err(diagnostic) => Outcome::Reject(diagnostic),
+    let verified = match result {
+        Ok(verified) => verified,
+        Err(diagnostic) => return Outcome::Reject(diagnostic),
+    };
+    let (manifest, canary_state, content_index) = verified.into_parts();
+
+    // Stage 8 history checks: anti-downgrade, equal-issued_at conflict, and
+    // runtime-key rotation against what was previously accepted.
+    if let Err(diagnostic) = check_against_history(&manifest, history) {
+        return Outcome::Reject(diagnostic);
     }
+
+    Outcome::Accept(VerifiedManifest {
+        manifest,
+        canary_state,
+        content_index,
+    })
 }
 
 /// Drive a content document through verification under a verified manifest's
