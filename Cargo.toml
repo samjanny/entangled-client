@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["crates/entangled-client"]
+
+# Shared dependency pins for all workspace members. The Entangled sibling repos
+# are path dependencies laid out alongside this repo under VSRepoImports/. Paths
+# in [workspace.dependencies] are relative to the WORKSPACE ROOT (this file), so
+# one level up reaches the VSRepoImports/ parent that holds them. `entangled-engine`
+# is added here when a member (the GUI shell) starts consuming the Scene IR.
+[workspace.dependencies]
+entangled-core = { path = "../entangled-api/entangled-core" }
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/samjanny/entangled-client"
+homepage = "https://github.com/samjanny/entangled"

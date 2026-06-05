@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+# entangled-client depends on entangled-core through a path dependency
+# (../entangled-api/entangled-core, relative to the workspace root). CI lays out
+# both repositories as siblings so the path resolves: this repo is checked out
+# under entangled-client/ and the entangled-api repo alongside it under
+# entangled-api/. (entangled-engine is added as a sibling here once the GUI
+# member starts consuming it.)
+jobs:
+  test:
+    name: Test ${{ matrix.os }} / ${{ matrix.rust }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        rust: [stable]
+        include:
+          - os: ubuntu-latest
+            rust: beta
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: entangled-client
+      - name: Checkout entangled-api (path dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: samjanny/entangled-api
+          path: entangled-api
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: entangled-client
+      - name: Build
+        working-directory: entangled-client
+        run: cargo build --workspace --all-targets --locked
+      - name: Test
+        working-directory: entangled-client
+        run: cargo test --workspace --all-targets --locked
+
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: entangled-client
+      - name: Checkout entangled-api (path dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: samjanny/entangled-api
+          path: entangled-api
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: entangled-client
+      - name: Clippy
+        working-directory: entangled-client
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  doc:
+    name: Doc build
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: entangled-client
+      - name: Checkout entangled-api (path dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: samjanny/entangled-api
+          path: entangled-api
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: entangled-client
+      - name: Doc
+        working-directory: entangled-client
+        run: cargo doc --workspace --no-deps --locked
+
+  purity:
+    name: Purity guard (no I/O or toolkit in the brain)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No std::net / std::fs / SystemTime / toolkit imports in entangled-client
+        run: |
+          if grep -rnE 'std::net|std::fs|SystemTime::now|\beframe\b|\begui\b|\breqwest\b|\btokio\b' \
+              crates/entangled-client/src; then
+            echo "::error::entangled-client must stay pure (no I/O or toolkit). See matches above."
+            exit 1
+          fi
+          echo "purity guard passed"
+
+  msrv:
+    name: MSRV (1.88)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: entangled-client
+      - name: Checkout entangled-api (path dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: samjanny/entangled-api
+          path: entangled-api
+      - uses: dtolnay/rust-toolchain@1.88
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: msrv
+          workspaces: entangled-client
+      - name: Build
+        working-directory: entangled-client
+        run: cargo build --workspace --all-targets --locked

@@ -1,0 +1,22 @@
+[package]
+name = "entangled-client"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Conforming-client orchestration for Entangled v1.0: the validation-pipeline driver and the I/O seams a client shell implements. Pure, no I/O, no toolkit."
+readme = "README.md"
+keywords = ["entangled", "client", "verification", "tor", "ed25519"]
+categories = ["cryptography", "network-programming"]
+
+[dependencies]
+entangled-core = { workspace = true }
+
+[dev-dependencies]
+# Used only by the golden tests to derive a Tor v3 onion address from an origin
+# pubkey (the same procedure entangled-core's own tests use), so a built
+# manifest passes Stage 9 origin binding.
+data-encoding = "2"
+sha3 = "0.10"
