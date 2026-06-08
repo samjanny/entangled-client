@@ -111,6 +111,12 @@ pub enum PersistenceIntent {
         new_pubkey: PublisherPubkey,
         /// The prior key being replaced (kept in publisher history).
         replaced: PublisherPubkey,
+        /// Whether the user externally verified the new key against its PIP
+        /// while resolving the mismatch (§10:349-353). When `true`, the shell
+        /// MUST persist the replacement as externally verified so the next
+        /// session resolves it as Externally verified, not a plain TOFU pin;
+        /// `false` is a plain confirmed replacement that starts as a TOFU pin.
+        externally_verified: bool,
     },
 }
 
@@ -214,22 +220,29 @@ fn mismatch(
     match decision {
         // The user explicitly confirmed the new key as legitimate: replace,
         // preserving the prior key in history. The new identity becomes a fresh
-        // First contact (it is not externally verified by this action alone).
+        // First contact (it is not externally verified by this action alone),
+        // so the replacement is persisted as a plain (non-externally-verified)
+        // pin.
         UserDecision::ConfirmNewIdentity => Resolution {
             state: TrustState::FirstContact,
             action: RequiredAction::None,
             intent: PersistenceIntent::ReplaceIdentity {
                 new_pubkey: *presented,
                 replaced: retained.pubkey,
+                externally_verified: false,
             },
         },
-        // The user also externally verified the new key while resolving.
+        // The user also externally verified the new key against its PIP while
+        // resolving (§10:349-353): the replacement is persisted as externally
+        // verified, so the next session resolves it as Externally verified
+        // rather than silently downgrading to a TOFU pin.
         UserDecision::ConfirmPip => Resolution {
             state: TrustState::ExternallyVerified,
             action: RequiredAction::None,
             intent: PersistenceIntent::ReplaceIdentity {
                 new_pubkey: *presented,
                 replaced: retained.pubkey,
+                externally_verified: true,
             },
         },
         // No confirmation: stay Changed/mismatch, warn prominently, and - the

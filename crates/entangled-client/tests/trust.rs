@@ -102,13 +102,15 @@ fn mismatch_against_externally_verified_also_never_replaces() {
 #[test]
 fn confirming_new_identity_replaces_and_preserves_prior() {
     let r = resolve(&key(2), Some(&pinned(1)), UserDecision::ConfirmNewIdentity);
-    // The replaced identity becomes a fresh First contact, not auto-verified.
+    // The replaced identity becomes a fresh First contact, not auto-verified,
+    // so the replacement is persisted as a plain (non-externally-verified) pin.
     assert_eq!(r.state, TrustState::FirstContact);
     assert_eq!(
         r.intent,
         PersistenceIntent::ReplaceIdentity {
             new_pubkey: key(2),
             replaced: key(1),
+            externally_verified: false,
         }
     );
 }
@@ -117,11 +119,46 @@ fn confirming_new_identity_replaces_and_preserves_prior() {
 fn confirming_new_identity_with_pip_replaces_and_verifies() {
     let r = resolve(&key(2), Some(&verified(1)), UserDecision::ConfirmPip);
     assert_eq!(r.state, TrustState::ExternallyVerified);
+    // The PIP-confirmed replacement MUST be persisted as externally verified
+    // (§10:349-353), so the next session does not silently downgrade it to a
+    // TOFU pin.
     assert_eq!(
         r.intent,
         PersistenceIntent::ReplaceIdentity {
             new_pubkey: key(2),
             replaced: key(1),
+            externally_verified: true,
         }
+    );
+}
+
+#[test]
+fn pip_confirmed_replacement_is_not_downgraded_next_session() {
+    // §10:349-353: a mismatch the user resolves by externally verifying the new
+    // PIP enters Externally verified - and MUST stay there across sessions. We
+    // simulate the persistence round-trip the shell performs: take this
+    // session's ReplaceIdentity intent, build the retained record it implies,
+    // and re-resolve the same key next session. It must resolve as Externally
+    // verified, not a plain TOFU pin.
+    let first = resolve(&key(2), Some(&verified(1)), UserDecision::ConfirmPip);
+    let PersistenceIntent::ReplaceIdentity {
+        new_pubkey,
+        externally_verified,
+        ..
+    } = first.intent
+    else {
+        panic!("ConfirmPip mismatch must yield a ReplaceIdentity intent");
+    };
+    // The shell persists the replacement with the flag the intent carries.
+    let next_session_record = RetainedIdentity {
+        pubkey: new_pubkey,
+        externally_verified,
+    };
+    // Next session, the same key is presented with no new decision.
+    let second = resolve(&key(2), Some(&next_session_record), UserDecision::None);
+    assert_eq!(
+        second.state,
+        TrustState::ExternallyVerified,
+        "a PIP-confirmed replacement must not silently downgrade to TofuPinned"
     );
 }

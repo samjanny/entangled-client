@@ -109,11 +109,25 @@ pub fn check_against_history(
         &record.manifest_payload_hash,
         newest,
     )?;
-    check_runtime_pubkey_rotation(
-        &record.runtime_pubkey,
-        &record.issued_at,
-        newest,
-        history.extended(),
-    )?;
+    // A byte-identical re-fetch of the newest retained manifest is normal
+    // steady-state traffic the protocol explicitly blesses (§08:242: "this rule
+    // does not affect refetching the same manifest"). The runtime-rotation MUST
+    // is scoped to a *new* manifest with a *fresh* canary; a same-payload
+    // re-fetch carries the same issued_at and makes no rotation claim. The
+    // anti-downgrade (strict `<`) and conflict (payload-hash carve-out) checks
+    // already pass such a re-fetch; the rotation check is the lone one lacking
+    // the symmetric exemption, so skip it on a payload-hash match to avoid a
+    // spurious E_CANARY_RUNTIME_REUSE. (A different payload re-using the runtime
+    // key still trips the check, since its hash differs.)
+    let is_same_payload_refetch = newest
+        .is_some_and(|n| n.manifest_payload_hash == record.manifest_payload_hash);
+    if !is_same_payload_refetch {
+        check_runtime_pubkey_rotation(
+            &record.runtime_pubkey,
+            &record.issued_at,
+            newest,
+            history.extended(),
+        )?;
+    }
     Ok(())
 }

@@ -145,3 +145,23 @@ fn reused_runtime_key_is_rejected() {
         Some(DiagnosticCode::ECanaryRuntimeReuse)
     );
 }
+
+#[test]
+fn same_payload_refetch_is_accepted() {
+    // Re-fetching the byte-identical newest manifest is normal steady-state
+    // traffic (§08:242). It carries the same runtime key, but because the
+    // payload hash matches the retained record it must NOT trip the
+    // runtime-rotation check - unlike a *new* manifest reusing the key
+    // (`reused_runtime_key_is_rejected`, which differs in issued_at/payload).
+    let (bytes, onion) = manifest("2026-05-07T00:00:00Z", "2026-06-06T00:00:00Z", 0xA1);
+    let history = history_with(&bytes, &onion, "2026-05-07T00:00:00Z");
+
+    // Same bytes, re-fetched during the normal interval before the next ceremony.
+    let clock = FixedClock(ts("2026-05-20T00:00:00Z"));
+    let outcome = verify_manifest(&bytes, &onion, None, &clock, &history);
+    assert!(
+        outcome.is_accepted(),
+        "a byte-identical re-fetch must accept, not report RUNTIME_REUSE: {:?}",
+        outcome.diagnostic().map(|d| d.code)
+    );
+}
