@@ -17,6 +17,7 @@ use entangled_core::types::manifest::{Carrier, OnionAddress, Origin};
 use entangled_core::types::meta::Meta;
 use entangled_core::types::slug::Slug;
 use entangled_core::types::timestamp::EntangledTimestamp;
+use entangled_core::types::link::LinkTarget;
 use entangled_core::types::{Block, EntangledPath, InlineElement, NoteVariant, TextMark};
 
 fn ts(s: &str) -> EntangledTimestamp {
@@ -52,31 +53,45 @@ fn main() {
         .as_bytes();
     let onion = OnionAddress::try_from(onion_for(&origin_pk_bytes).as_str()).expect("onion");
 
-    let unsigned = UnsignedManifest {
-        spec_version: SpecVersion,
-        publisher_pubkey: publisher_key.verifying_key(),
-        origin: Origin {
-            carrier: Carrier::TorV3,
-            address: onion.clone(),
-            origin_pubkey: OriginPubkey::from_bytes(origin_pk_bytes),
-            not_after: None,
-        },
-        canary: Canary {
-            runtime_pubkey: runtime_key.verifying_key(),
-            issued_at: ts("2026-05-07T00:00:00Z").into(),
-            next_expected: ts("2026-06-06T00:00:00Z").into(),
-            statement: "All clear.".to_owned(),
-            freshness_proof: None,
-        },
-        state_policy: vec![],
-        navigation: vec![],
-        min_refresh_interval: 86_400,
-        updated: ts("2026-05-07T00:00:00Z"),
-        migration_pointer: None,
-        content_root: None,
+    // Build a manifest whose canary expires at `next_expected`. The GUI's
+    // FixedClock is 2026-06-05, so next_expected after that is Fresh/Near and
+    // before that is Expired - letting us dump both a normal and an
+    // expired-canary manifest from the same publisher/runtime keys.
+    let make_manifest = |next_expected: &str| {
+        let unsigned = UnsignedManifest {
+            spec_version: SpecVersion,
+            publisher_pubkey: publisher_key.verifying_key(),
+            origin: Origin {
+                carrier: Carrier::TorV3,
+                address: onion.clone(),
+                origin_pubkey: OriginPubkey::from_bytes(origin_pk_bytes),
+                not_after: None,
+            },
+            canary: Canary {
+                runtime_pubkey: runtime_key.verifying_key(),
+                issued_at: ts("2026-05-07T00:00:00Z").into(),
+                next_expected: ts(next_expected).into(),
+                statement: "All clear.".to_owned(),
+                freshness_proof: None,
+            },
+            state_policy: vec![],
+            navigation: vec![],
+            min_refresh_interval: 86_400,
+            updated: ts("2026-05-07T00:00:00Z"),
+            migration_pointer: None,
+            content_root: None,
+        };
+        build_manifest(&unsigned, &publisher_key, &ts("2026-05-07T00:00:00Z"))
+            .expect("manifest")
+            .1
     };
-    let (_m, manifest_bytes) =
-        build_manifest(&unsigned, &publisher_key, &ts("2026-05-07T00:00:00Z")).expect("manifest");
+    // next_expected after the clock -> not expired.
+    let manifest_bytes = make_manifest("2026-06-06T00:00:00Z");
+    // next_expected before the clock -> Expired canary (drives the render-block).
+    let expired_manifest_bytes = make_manifest("2026-06-01T00:00:00Z");
+    // A valid carrier (tor-v3) URL reuses the publisher's own onion host so it
+    // passes carrier-URL validation.
+    let carrier_url = format!("http://{}/docs", onion_for(&origin_pk_bytes));
 
     let content = UnsignedContent {
         spec_version: SpecVersion,
@@ -127,14 +142,33 @@ fn main() {
                     vec![],
                 )],
             },
+            // A carrier link (reached over the carrier, not the clearnet) and a
+            // citation link (clearnet), to exercise the class-distinct handoff.
+            Block::Link {
+                label: vec![text("A carrier-reachable service", vec![])],
+                target: LinkTarget::Carrier {
+                    carrier: Carrier::TorV3,
+                    url: carrier_url.clone(),
+                },
+            },
+            Block::Link {
+                label: vec![text("A clearnet citation", vec![])],
+                target: LinkTarget::Citation {
+                    url: "https://example.org/ref".to_owned(),
+                },
+            },
         ],
         seq: None,
     };
     let (_c, content_bytes) = build_content(&content, &runtime_key).expect("content");
 
     std::fs::write("/tmp/ent-manifest.json", &manifest_bytes).expect("write manifest");
+    std::fs::write("/tmp/ent-manifest-expired.json", &expired_manifest_bytes)
+        .expect("write expired manifest");
     std::fs::write("/tmp/ent-content.json", &content_bytes).expect("write content");
 
-    eprintln!("wrote /tmp/ent-manifest.json and /tmp/ent-content.json");
+    eprintln!(
+        "wrote /tmp/ent-manifest.json, /tmp/ent-manifest-expired.json, /tmp/ent-content.json"
+    );
     println!("{}", onion_for(&origin_pk_bytes));
 }

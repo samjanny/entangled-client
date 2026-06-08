@@ -184,10 +184,36 @@ fn build(
     .map_err(|e| e.to_string())
 }
 
+/// Which external link kind a handoff is for. The two carry different
+/// trust-boundary semantics (section 03), so the handoff dialog must not show
+/// the same notice for both: a `carrier` destination is outside Entangled but
+/// still reached over the carrier (Tor), while a `citation` destination is on
+/// the clearnet.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum HandoffKind {
+    /// A `carrier` target: reached over the carrier, not the clearnet (§03:593).
+    Carrier,
+    /// A `citation` target: a clearnet reference (§03:621).
+    Citation,
+}
+
+/// A pending external-link handoff: the destination URL and which kind of
+/// external target it is.
+#[derive(Clone)]
+struct Handoff {
+    url: String,
+    kind: HandoffKind,
+}
+
 struct App {
     loaded: Loaded,
-    /// When set, the external-link handoff dialog is open for this URL.
-    handoff: Option<String>,
+    /// When set, the external-link handoff dialog is open for this target.
+    handoff: Option<Handoff>,
+    /// Per-session override of the Expired-canary render-block (§08:185). Starts
+    /// `false`; set only by an affirmative user click. It applies for the rest
+    /// of this session for this site, does not persist, does not modify the
+    /// canary state, and does not suppress the chrome warning.
+    canary_override: bool,
 }
 
 impl App {
@@ -195,6 +221,7 @@ impl App {
         App {
             loaded,
             handoff: None,
+            canary_override: false,
         }
     }
 }
@@ -224,7 +251,14 @@ impl eframe::App for App {
             });
 
         // A click on an external link this frame requests the handoff dialog.
-        let mut requested: Option<String> = None;
+        let mut requested: Option<Handoff> = None;
+        // An Expired canary blocks rendering of publisher content by default
+        // (§08:185 / §10:211): the content area must be blank or a client-
+        // generated placeholder until the user invokes the per-session
+        // override. A click on the override control this frame is recorded.
+        let canary_expired = self.loaded.chrome.canary_state == CanaryState::Expired;
+        let render_blocked = render_block_active(canary_expired, self.canary_override);
+        let mut override_clicked = false;
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 // Constrain content to a readable column rather than the full
@@ -235,18 +269,33 @@ impl eframe::App for App {
                     ui.add_space(((ui.available_width() - max_width) / 2.0).max(0.0));
                     ui.vertical(|ui| {
                         ui.set_max_width(max_width);
-                        match &self.loaded.scene {
-                            Some(scene) => draw_scene(ui, scene, &mut requested),
-                            None => {
-                                ui.label("(manifest only - no content document loaded)");
+                        if render_blocked {
+                            // Client-generated placeholder in place of the
+                            // publisher scene; publisher content MUST NOT appear.
+                            override_clicked = draw_canary_block(ui);
+                        } else {
+                            // When rendering under an active override, a
+                            // persistent notice sits above the content (the
+                            // override does not suppress the warning, §08:185).
+                            if canary_expired && self.canary_override {
+                                draw_override_active_notice(ui);
+                            }
+                            match &self.loaded.scene {
+                                Some(scene) => draw_scene(ui, scene, &mut requested),
+                                None => {
+                                    ui.label("(manifest only - no content document loaded)");
+                                }
                             }
                         }
                     });
                 });
             });
         });
-        if let Some(url) = requested {
-            self.handoff = Some(url);
+        if override_clicked {
+            self.canary_override = true;
+        }
+        if let Some(target) = requested {
+            self.handoff = Some(target);
         }
 
         self.show_handoff(ctx);
@@ -258,13 +307,37 @@ impl App {
     /// navigate automatically to a citation/carrier URL. When the user clicks
     /// such a link, show the full URL and the trust-boundary notice, and offer
     /// only an explicit copy-to-clipboard (this viewer never opens a browser).
+    ///
+    /// Carrier and citation are NOT the same boundary (§03:593 vs §03:621): a
+    /// `carrier` destination is outside Entangled but still reached over the
+    /// carrier (Tor) - it is not exposed to the clearnet - whereas a `citation`
+    /// is a clearnet reference. The notice text branches on the kind so the
+    /// dialog never tells the user a carrier-onion link "leaves for the
+    /// clearnet."
     fn show_handoff(&mut self, ctx: &egui::Context) {
-        let Some(url) = self.handoff.clone() else {
+        let Some(target) = self.handoff.clone() else {
             return;
+        };
+        let url = target.url;
+        let (title, notice) = match target.kind {
+            HandoffKind::Carrier => (
+                "Open carrier link?",
+                "This link points outside Entangled to a service reachable over the carrier \
+                 (Tor), not the clearnet. It is not auto-opened: copying it lets you open it in \
+                 a carrier-aware browser (such as Tor Browser). Do not open it in a browser that \
+                 would resolve the host over public DNS or the clearnet, which would leak the \
+                 request and defeat the carrier's confidentiality.",
+            ),
+            HandoffKind::Citation => (
+                "Open clearnet link?",
+                "This link leaves Entangled for the clearnet. Opening or copying it transmits the \
+                 URL outside the carrier; the destination and any in-path observer on the clearnet \
+                 may learn it was reached from here.",
+            ),
         };
         let mut open = true;
         let mut close = false;
-        egui::Window::new("Open external link?")
+        egui::Window::new(title)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -281,12 +354,8 @@ impl App {
                             .color(Severity::Caution.accent()),
                     );
                     ui.label(
-                        egui::RichText::new(
-                            "This link leaves Entangled for the clearnet. Opening or copying it \
-                             transmits the URL outside the carrier; the destination and any \
-                             in-path observer may learn it was reached from here.",
-                        )
-                        .color(egui::Color32::from_rgb(0xE6, 0xCF, 0x9a)),
+                        egui::RichText::new(notice)
+                            .color(egui::Color32::from_rgb(0xE6, 0xCF, 0x9a)),
                     );
                 });
                 ui.add_space(10.0);
@@ -589,16 +658,109 @@ fn canary_badge(state: CanaryState) -> (&'static str, Severity) {
     }
 }
 
+/// Whether the publisher content area must be blocked this frame: true exactly
+/// when the canary is Expired and the user has not invoked the per-session
+/// override (§08:185 / §10:211). Pure, so the gating is unit-testable without a
+/// window.
+fn render_block_active(canary_expired: bool, override_active: bool) -> bool {
+    canary_expired && !override_active
+}
+
+/// The Expired-canary render-block placeholder shown in place of publisher
+/// content (§08:185 / §10:211). Publisher content MUST NOT appear here. Renders
+/// a client-generated explanation and an affirmative per-session override
+/// control; returns `true` on the frame the user clicks the override (a passive
+/// event never counts as acceptance - only this button click does).
+fn draw_canary_block(ui: &mut egui::Ui) -> bool {
+    ui.add_space(24.0);
+    let mut clicked = false;
+    egui::Frame::none()
+        .fill(egui::Color32::from_rgb(0x20, 0x18, 0x14))
+        .rounding(egui::Rounding::same(8.0))
+        .stroke(egui::Stroke::new(1.0, Severity::Alert.accent().gamma_multiply(0.6)))
+        .inner_margin(egui::Margin::same(16.0))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.label(
+                    egui::RichText::new("\u{26A0}")
+                        .size(18.0)
+                        .color(Severity::Alert.accent()),
+                );
+                ui.label(
+                    egui::RichText::new("Content blocked: the publisher's canary has expired")
+                        .size(16.0)
+                        .strong()
+                        .color(egui::Color32::from_rgb(0xF0, 0xE0, 0xD8)),
+                );
+            });
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new(
+                    "The publisher missed a committed canary refresh. The content is not shown as \
+                     current because an expired canary can signal an operational pause or a \
+                     compromise. You may proceed for this session only.",
+                )
+                .color(egui::Color32::from_rgb(0xD0, 0xC0, 0xB8)),
+            );
+            ui.add_space(12.0);
+            if ui
+                .button(
+                    egui::RichText::new("Show content for this session")
+                        .strong()
+                        .color(egui::Color32::from_rgb(0xF0, 0xE0, 0xD8)),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            {
+                clicked = true;
+            }
+        });
+    clicked
+}
+
+/// The persistent, not-easily-dismissible notice shown above content while the
+/// Expired-canary render-block is active by user override (§08:185). The
+/// override does not suppress this warning.
+fn draw_override_active_notice(ui: &mut egui::Ui) {
+    egui::Frame::none()
+        .fill(egui::Color32::from_rgb(0x3c, 0x30, 0x12))
+        .rounding(egui::Rounding::same(6.0))
+        .inner_margin(egui::Margin::symmetric(10.0, 7.0))
+        .stroke(egui::Stroke::new(1.0, Severity::Caution.accent().gamma_multiply(0.6)))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.label(
+                    egui::RichText::new("\u{26A0}")
+                        .size(14.0)
+                        .color(Severity::Caution.accent()),
+                );
+                ui.label(
+                    egui::RichText::new(
+                        "Expired-canary content is shown by your override for this session.",
+                    )
+                    .size(13.0)
+                    .strong()
+                    .color(egui::Color32::from_rgb(0xF2, 0xDC, 0xA0)),
+                );
+            });
+        });
+    ui.add_space(12.0);
+}
+
 /// Draw a content scene: one egui element per node. egui handles pixel
 /// wrapping, so the engine Scene is rendered directly without column layout.
-/// A click on an external (citation/carrier) link sets `handoff` to its URL.
-fn draw_scene(ui: &mut egui::Ui, scene: &Scene, handoff: &mut Option<String>) {
+/// A click on an external (citation/carrier) link sets `handoff` to its target.
+fn draw_scene(ui: &mut egui::Ui, scene: &Scene, handoff: &mut Option<Handoff>) {
     for node in &scene.nodes {
         draw_node(ui, node, handoff);
     }
 }
 
-fn draw_node(ui: &mut egui::Ui, node: &SceneNode, handoff: &mut Option<String>) {
+fn draw_node(ui: &mut egui::Ui, node: &SceneNode, handoff: &mut Option<Handoff>) {
     // Comfortable typographic constants for the content column.
     const BODY: f32 = 15.0;
     let body_color = egui::Color32::from_rgb(0xCC, 0xD2, 0xDA);
@@ -718,17 +880,38 @@ fn draw_node(ui: &mut egui::Ui, node: &SceneNode, handoff: &mut Option<String>) 
             job.sections
                 .iter_mut()
                 .for_each(|s| s.format.underline = egui::Stroke::new(1.0, s.format.color));
-            match external_url(link) {
+            match external_handoff(link) {
                 // Citation/carrier links are clickable but never auto-navigate:
-                // a click requests the handoff dialog (section 03).
-                Some(url) => {
-                    if ui
-                        .add(egui::Label::new(job).sense(egui::Sense::click()))
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .clicked()
-                    {
-                        *handoff = Some(url);
-                    }
+                // a click requests the handoff dialog (section 03). Carrier and
+                // citation are displayed distinctly (§03:593, §03:621) via a
+                // trailing class tag, so the user can tell a carrier-reachable
+                // destination from a clearnet one before opening the handoff.
+                Some(target) => {
+                    let tag = match target.kind {
+                        HandoffKind::Carrier => " [carrier \u{2197}]",
+                        HandoffKind::Citation => " [clearnet \u{2197}]",
+                    };
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        let clicked = ui
+                            .add(egui::Label::new(job).sense(egui::Sense::click()))
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked();
+                        let tag_clicked = ui
+                            .add(
+                                egui::Label::new(
+                                    egui::RichText::new(tag)
+                                        .size(BODY - 2.0)
+                                        .color(muted),
+                                )
+                                .sense(egui::Sense::click()),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked();
+                        if clicked || tag_clicked {
+                            *handoff = Some(target);
+                        }
+                    });
                 }
                 // Same-site / entangled links are internal navigation, out of
                 // scope for this read-only tranche: shown inert.
@@ -861,13 +1044,22 @@ fn runs_text(runs: &[InlineRun]) -> String {
     s
 }
 
-/// The clearnet/carrier URL of an external link, or `None` for an internal
-/// (same-site / entangled) target. Only external targets get the handoff
-/// dialog; internal navigation is out of scope for this read-only tranche.
-fn external_url(link: &entangled_engine::LinkRef) -> Option<String> {
+/// The external-handoff target of a link, or `None` for an internal (same-site
+/// / entangled) target. Carrier and citation are kept distinct so the renderer
+/// and the handoff dialog can present their different trust boundaries (§03:593
+/// vs §03:621); only external targets get the handoff dialog, since internal
+/// navigation is out of scope for this read-only tranche.
+fn external_handoff(link: &entangled_engine::LinkRef) -> Option<Handoff> {
     use entangled_engine::LinkRef as L;
     match link {
-        L::Citation { url } | L::Carrier { url, .. } => Some(url.clone()),
+        L::Carrier { url, .. } => Some(Handoff {
+            url: url.clone(),
+            kind: HandoffKind::Carrier,
+        }),
+        L::Citation { url } => Some(Handoff {
+            url: url.clone(),
+            kind: HandoffKind::Citation,
+        }),
         L::SameSite { .. } | L::Entangled { .. } => None,
     }
 }
@@ -881,4 +1073,58 @@ fn field_label(field: &entangled_engine::FormFieldView) -> String {
         F::Checkbox { label, .. } => ("checkbox", label),
     };
     format!("[{kind}] {label}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use entangled_engine::LinkRef;
+
+    // --- H-1: Expired-canary render-block gating (§08:185 / §10:211) ---
+
+    #[test]
+    fn non_expired_canary_never_blocks() {
+        // Whatever the override flag, a non-Expired canary renders content.
+        assert!(!render_block_active(false, false));
+        assert!(!render_block_active(false, true));
+    }
+
+    #[test]
+    fn expired_canary_blocks_until_override() {
+        // Expired blocks by default...
+        assert!(render_block_active(true, false));
+        // ...and only an active per-session override unblocks it.
+        assert!(!render_block_active(true, true));
+    }
+
+    // --- M-3: carrier vs citation handoff classification (§03:593 / §03:621) ---
+
+    #[test]
+    fn carrier_link_is_a_carrier_handoff() {
+        let link = LinkRef::Carrier {
+            carrier: entangled_core::types::Carrier::TorV3,
+            url: "http://example.onion/x".to_owned(),
+        };
+        let h = external_handoff(&link).expect("carrier is an external handoff");
+        assert_eq!(h.kind, HandoffKind::Carrier);
+        assert_eq!(h.url, "http://example.onion/x");
+    }
+
+    #[test]
+    fn citation_link_is_a_citation_handoff() {
+        let link = LinkRef::Citation {
+            url: "https://example.org/ref".to_owned(),
+        };
+        let h = external_handoff(&link).expect("citation is an external handoff");
+        assert_eq!(h.kind, HandoffKind::Citation);
+    }
+
+    #[test]
+    fn internal_links_have_no_handoff() {
+        // Same-site is internal navigation, never an external handoff.
+        let link = LinkRef::SameSite {
+            path: entangled_core::types::EntangledPath::try_from("/x").expect("path"),
+        };
+        assert!(external_handoff(&link).is_none());
+    }
 }
