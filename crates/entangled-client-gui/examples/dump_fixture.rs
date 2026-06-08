@@ -53,14 +53,15 @@ fn main() {
         .as_bytes();
     let onion = OnionAddress::try_from(onion_for(&origin_pk_bytes).as_str()).expect("onion");
 
-    // Build a manifest whose canary expires at `next_expected`. The GUI's
-    // FixedClock is 2026-06-05, so next_expected after that is Fresh/Near and
-    // before that is Expired - letting us dump both a normal and an
-    // expired-canary manifest from the same publisher/runtime keys.
-    let make_manifest = |next_expected: &str| {
+    // Build a manifest signed by `signer`, whose canary expires at
+    // `next_expected`. The GUI's FixedClock is 2026-06-05, so next_expected after
+    // that is Fresh/Near and before that is Expired. The signer is parameterized
+    // so we can also emit a "changed key" manifest (a different publisher key)
+    // over the SAME origin onion, to drive the Changed/mismatch dialog.
+    let make_manifest = |signer: &PublisherSigningKey, next_expected: &str| {
         let unsigned = UnsignedManifest {
             spec_version: SpecVersion,
-            publisher_pubkey: publisher_key.verifying_key(),
+            publisher_pubkey: signer.verifying_key(),
             origin: Origin {
                 carrier: Carrier::TorV3,
                 address: onion.clone(),
@@ -81,14 +82,19 @@ fn main() {
             migration_pointer: None,
             content_root: None,
         };
-        build_manifest(&unsigned, &publisher_key, &ts("2026-05-07T00:00:00Z"))
+        build_manifest(&unsigned, signer, &ts("2026-05-07T00:00:00Z"))
             .expect("manifest")
             .1
     };
     // next_expected after the clock -> not expired.
-    let manifest_bytes = make_manifest("2026-06-06T00:00:00Z");
+    let manifest_bytes = make_manifest(&publisher_key, "2026-06-06T00:00:00Z");
     // next_expected before the clock -> Expired canary (drives the render-block).
-    let expired_manifest_bytes = make_manifest("2026-06-01T00:00:00Z");
+    let expired_manifest_bytes = make_manifest(&publisher_key, "2026-06-01T00:00:00Z");
+    // A DIFFERENT publisher key over the same origin onion -> verifies, but
+    // presents a different publisher_pubkey, driving the Changed/mismatch dialog
+    // against a store pinned to the 0xB1 publisher.
+    let changed_publisher_key = PublisherSigningKey::from_seed(&[0xC1; 32]);
+    let changed_manifest_bytes = make_manifest(&changed_publisher_key, "2026-06-06T00:00:00Z");
     // A valid carrier (tor-v3) URL reuses the publisher's own onion host so it
     // passes carrier-URL validation.
     let carrier_url = format!("http://{}/docs", onion_for(&origin_pk_bytes));
@@ -165,10 +171,13 @@ fn main() {
     std::fs::write("/tmp/ent-manifest.json", &manifest_bytes).expect("write manifest");
     std::fs::write("/tmp/ent-manifest-expired.json", &expired_manifest_bytes)
         .expect("write expired manifest");
+    std::fs::write("/tmp/ent-manifest-changed.json", &changed_manifest_bytes)
+        .expect("write changed-key manifest");
     std::fs::write("/tmp/ent-content.json", &content_bytes).expect("write content");
 
     eprintln!(
-        "wrote /tmp/ent-manifest.json, /tmp/ent-manifest-expired.json, /tmp/ent-content.json"
+        "wrote /tmp/ent-manifest.json, /tmp/ent-manifest-expired.json, \
+         /tmp/ent-manifest-changed.json, /tmp/ent-content.json"
     );
     println!("{}", onion_for(&origin_pk_bytes));
 }

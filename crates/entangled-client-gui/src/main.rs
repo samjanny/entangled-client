@@ -3,44 +3,151 @@
 //! Loads a manifest (and optionally a content document) from files, verifies
 //! them through `entangled-client`, and draws the chrome and content in a
 //! window. All verification and the chrome model live in the pure crates; this
-//! file only reads files and maps the result to egui widgets.
+//! file only reads files, drives the persistence store, and maps the result to
+//! egui widgets.
 //!
-//! Read-only tranche: there is no retained identity, persistence, or pinning
-//! prompt yet. The window is honest that it is a viewer, not a conforming
-//! client.
+//! Trust is live: the binary loads the retained identity and accepted-manifest
+//! history for the manifest's publisher from the store before verifying, drives
+//! the first-contact pinning prompt and the Changed/mismatch resolution dialog,
+//! and persists the user's decision (only after the manifest fully verified).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use eframe::egui;
 use entangled_client::chrome::{ChromeView, Warning};
-use entangled_client::trust::TrustState;
-use entangled_client::FixedClock;
+use entangled_client::trust::{PersistenceIntent, RequiredAction, TrustState, UserDecision};
+use entangled_client::{FixedClock, HistoryStore, IdentityStore};
 use entangled_client_gui::{load, Loaded};
-use entangled_core::types::{EntangledTimestamp, OnionAddress};
+use entangled_client_store::{FileHistoryStore, FileIdentityStore, Protection, StoreRoot};
+use entangled_core::types::{EntangledTimestamp, OnionAddress, PublisherPubkey};
 use entangled_core::validation::canary::CanaryState;
 use entangled_engine::{InlineRun, Scene, SceneNode};
 
 const NOT_A_CLIENT: &str =
-    "entangled-client-gui - read-only viewer (no persistence/pinning yet; NOT a conforming client)";
+    "entangled-client-gui - work in progress (live pinning; NOT yet a fully conforming client)";
+
+/// The store handle the binary owns: the two file-backed stores over a shared
+/// root. The brain never sees this; only the binary reads/writes through it.
+#[derive(Clone)]
+struct StoreHandle {
+    identities: FileIdentityStore,
+    history: FileHistoryStore,
+}
+
+impl StoreHandle {
+    fn open(root: Arc<StoreRoot>) -> StoreHandle {
+        StoreHandle {
+            identities: FileIdentityStore::new(root.clone()),
+            history: FileHistoryStore::new(root),
+        }
+    }
+}
+
+/// Parsed command-line options.
+struct Cli {
+    manifest: PathBuf,
+    onion: String,
+    content: Option<PathBuf>,
+    store_dir: PathBuf,
+    encrypted: bool,
+}
+
+fn parse_cli() -> Result<Cli, String> {
+    let mut manifest = None;
+    let mut onion = None;
+    let mut content = None;
+    let mut store_dir = None;
+    let mut encrypted = false;
+    let mut positional = Vec::new();
+
+    let mut args = std::env::args_os().skip(1);
+    while let Some(arg) = args.next() {
+        let s = arg.to_string_lossy().into_owned();
+        match s.as_str() {
+            "--store" => {
+                store_dir = Some(PathBuf::from(
+                    args.next().ok_or("--store needs a directory")?,
+                ));
+            }
+            "--store-encrypted" => encrypted = true,
+            _ => positional.push(s),
+        }
+    }
+    let mut it = positional.into_iter();
+    manifest = it.next().map(PathBuf::from).or(manifest);
+    onion = it.next().or(onion);
+    content = it.next().map(PathBuf::from).or(content);
+
+    let manifest = manifest.ok_or_else(usage)?;
+    let onion = onion.ok_or("missing <onion-address>")?;
+    let store_dir = store_dir.unwrap_or_else(default_store_dir);
+    Ok(Cli {
+        manifest,
+        onion,
+        content,
+        store_dir,
+        encrypted,
+    })
+}
+
+fn usage() -> String {
+    "usage: entangled-client-gui [--store <dir>] [--store-encrypted] \
+     <manifest.json> <onion-address> [content.json]"
+        .to_owned()
+}
+
+/// Default per-user store directory (OS data dir + `entangled-client`).
+fn default_store_dir() -> PathBuf {
+    if let Some(dirs) = directories::ProjectDirs::from("org", "entangled", "entangled-client") {
+        dirs.data_dir().join("store")
+    } else {
+        PathBuf::from(".entangled-client-store")
+    }
+}
 
 fn main() -> ExitCode {
-    let mut args = std::env::args_os().skip(1);
-    let (Some(manifest), onion_arg) = (args.next(), args.next()) else {
-        eprintln!("usage: entangled-client-gui <manifest.json> <onion-address> [content.json]");
-        eprintln!("  loads and verifies a manifest (and optional content) and shows it.");
-        return ExitCode::from(2);
+    let cli = match parse_cli() {
+        Ok(c) => c,
+        Err(msg) => {
+            eprintln!("error: {msg}");
+            eprintln!("{}", usage());
+            return ExitCode::from(2);
+        }
     };
-    let Some(onion_arg) = onion_arg else {
-        eprintln!("error: missing <onion-address> (the address the manifest was fetched from)");
-        return ExitCode::from(2);
+
+    // Open the store (resolving the protection mode + passphrase) before load.
+    let protection = if cli.encrypted {
+        Protection::Encrypted
+    } else {
+        Protection::Integrity
     };
-    let content_arg = args.next();
+    let passphrase = if cli.encrypted {
+        match rpassword::prompt_password("store passphrase: ") {
+            Ok(p) => Some(p),
+            Err(e) => {
+                eprintln!("error: reading passphrase: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
+    let root = match StoreRoot::open(cli.store_dir.clone(), &protection, passphrase.as_deref()) {
+        Ok(r) => Arc::new(r),
+        Err(e) => {
+            eprintln!("error: opening store at {}: {e}", cli.store_dir.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    let store = StoreHandle::open(root);
 
     let loaded = match build(
-        &PathBuf::from(manifest),
-        &onion_arg.to_string_lossy(),
-        content_arg.as_ref().map(PathBuf::from).as_deref(),
+        &cli.manifest,
+        &cli.onion,
+        cli.content.as_deref(),
+        &store,
     ) {
         Ok(l) => l,
         Err(msg) => {
@@ -56,10 +163,10 @@ fn main() -> ExitCode {
     match eframe::run_native(
         "entangled-client",
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
             install_fonts(&cc.egui_ctx);
             install_theme(&cc.egui_ctx);
-            Ok(Box::new(App::new(loaded)))
+            Ok(Box::new(App::new(loaded, store)))
         }),
     ) {
         Ok(()) => ExitCode::SUCCESS,
@@ -68,6 +175,12 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// The PIP (24-word public identity phrase) for a publisher key, for display in
+/// the mismatch dialog where both the prior and presented PIPs are compared.
+fn publisher_pip(pubkey: &PublisherPubkey) -> String {
+    entangled_core::crypto::derive_pip(pubkey)
 }
 
 /// A named font family for bold runs (egui's built-in families are only
@@ -159,6 +272,7 @@ fn build(
     manifest_path: &std::path::Path,
     onion: &str,
     content_path: Option<&std::path::Path>,
+    store: &StoreHandle,
 ) -> Result<Loaded, String> {
     let manifest_bytes =
         std::fs::read(manifest_path).map_err(|e| format!("reading manifest: {e}"))?;
@@ -173,6 +287,23 @@ fn build(
     let clock = FixedClock(
         EntangledTimestamp::try_from("2026-06-05T00:00:00Z").expect("valid fixed timestamp"),
     );
+
+    // Identity is keyed by SITE (the onion we fetched from), per §10:187 - so a
+    // key change on the same site reads as a mismatch, not first contact. The
+    // accepted-manifest history is keyed by publisher (anti-downgrade is per
+    // K_publisher, §08:217); we read the publisher from a cheap top-level parse.
+    // The parse pins nothing; if the manifest is later rejected, no record is
+    // created.
+    let retained = store
+        .identities
+        .load_identity(&address)
+        .map_err(|e| format!("loading retained identity: {e}"))?;
+    let publisher = peek_publisher_pubkey(&manifest_bytes)?;
+    let history = store
+        .history
+        .load_history(&publisher)
+        .map_err(|e| format!("loading publisher history: {e}"))?;
+
     // Show the full onion address in chrome (there is room horizontally).
     load(
         &manifest_bytes,
@@ -180,8 +311,23 @@ fn build(
         &address,
         onion.to_owned(),
         &clock,
+        retained.as_ref(),
+        &history,
     )
     .map_err(|e| e.to_string())
+}
+
+/// Cheap top-level parse of `publisher_pubkey` from manifest bytes, to key the
+/// history store before full verification. Does not validate the manifest - any
+/// validation is done by `load`'s `verify_manifest`.
+fn peek_publisher_pubkey(manifest_bytes: &[u8]) -> Result<PublisherPubkey, String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(manifest_bytes).map_err(|e| format!("parsing manifest: {e}"))?;
+    let s = value
+        .get("publisher_pubkey")
+        .and_then(|v| v.as_str())
+        .ok_or("manifest has no string publisher_pubkey")?;
+    PublisherPubkey::try_from(s).map_err(|e| format!("invalid publisher_pubkey: {e:?}"))
 }
 
 /// Which external link kind a handoff is for. The two carry different
@@ -205,8 +351,25 @@ struct Handoff {
     kind: HandoffKind,
 }
 
+/// State for the first-contact pinning prompt (§10:312-317).
+struct PinPromptState {
+    /// The full 24-word PIP to compare out of band (never truncated).
+    pip: String,
+}
+
+/// State for the Changed/mismatch resolution dialog (§10:338).
+struct MismatchState {
+    /// The full PIP of the newly presented key.
+    presented_pip: String,
+    /// The full PIP of the previously retained key, for side-by-side compare.
+    retained_pip: String,
+}
+
 struct App {
     loaded: Loaded,
+    /// The store handle, owned by the binary; the brain never sees it. The only
+    /// writer is `apply_and_persist`.
+    store: StoreHandle,
     /// When set, the external-link handoff dialog is open for this target.
     handoff: Option<Handoff>,
     /// Per-session override of the Expired-canary render-block (§08:185). Starts
@@ -214,15 +377,86 @@ struct App {
     /// of this session for this site, does not persist, does not modify the
     /// canary state, and does not suppress the chrome warning.
     canary_override: bool,
+    /// When set, the first-contact pinning prompt is open (RequiredAction::PinPrompt).
+    pin_prompt: Option<PinPromptState>,
+    /// When set, the mismatch resolution dialog is open (RequiredAction::MismatchWarning).
+    mismatch_prompt: Option<MismatchState>,
 }
 
 impl App {
-    fn new(loaded: Loaded) -> App {
+    fn new(loaded: Loaded, store: StoreHandle) -> App {
+        // Open the prompt the load's required_action calls for.
+        let (pin_prompt, mismatch_prompt) = match loaded.required_action {
+            RequiredAction::PinPrompt => (
+                Some(PinPromptState {
+                    pip: loaded.chrome.pip.clone(),
+                }),
+                None,
+            ),
+            RequiredAction::MismatchWarning => {
+                let retained_pip = loaded
+                    .retained
+                    .as_ref()
+                    .map(|r| publisher_pip(&r.pubkey))
+                    .unwrap_or_default();
+                (
+                    None,
+                    Some(MismatchState {
+                        presented_pip: loaded.chrome.pip.clone(),
+                        retained_pip,
+                    }),
+                )
+            }
+            RequiredAction::None => (None, None),
+        };
         App {
             loaded,
+            store,
             handoff: None,
             canary_override: false,
+            pin_prompt,
+            mismatch_prompt,
         }
+    }
+
+    /// Apply a user trust decision: re-resolve (updating chrome in memory), then
+    /// persist the resulting intent to the store. Persistence ordering (§10:215)
+    /// is satisfied structurally - this is only reachable after `load` accepted
+    /// the manifest. The store write is the sole I/O side effect.
+    fn apply_and_persist(&mut self, decision: UserDecision) {
+        let intent = self.loaded.apply_decision(decision);
+        if let Err(e) = self.persist(&intent) {
+            // Persistence failure is surfaced, not silently swallowed: the user
+            // should know the decision did not stick.
+            eprintln!("error: persisting trust decision: {e}");
+        }
+        // Refresh the in-memory retained snapshot so a re-resolve this session
+        // matches the just-pinned key and no prompt re-opens.
+        match self.store.identities.load_identity(&self.loaded.site) {
+            Ok(r) => self.loaded.retained = r,
+            Err(e) => eprintln!("error: reloading retained identity: {e}"),
+        }
+        // The decision resolved the prompt; close both.
+        self.pin_prompt = None;
+        self.mismatch_prompt = None;
+    }
+
+    /// Write the persistence intent (keyed by site) and, for a pin/confirm,
+    /// append the accepted manifest record to history (keyed by publisher).
+    fn persist(&self, intent: &PersistenceIntent) -> Result<(), entangled_client::StoreError> {
+        self.store.identities.apply(&self.loaded.site, intent)?;
+        // A persisted decision means this manifest is now retained for the
+        // resulting publisher; append its record for anti-downgrade continuity.
+        let publisher = match intent {
+            PersistenceIntent::None => return Ok(()),
+            PersistenceIntent::PinIdentity { pubkey }
+            | PersistenceIntent::MarkExternallyVerified { pubkey } => *pubkey,
+            PersistenceIntent::ReplaceIdentity { new_pubkey, .. } => *new_pubkey,
+        };
+        if let Some(record) = &self.loaded.record {
+            self.store.history.append_record(&publisher, record)?;
+        }
+        Ok(())
     }
 }
 
@@ -243,12 +477,27 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Chrome: a client-controlled top panel, structurally separate from the
         // content area below. Its distinct frame makes the boundary visible.
-        // Publisher content never draws here.
+        // Publisher content never draws here. The trust-decision controls
+        // (pinning, mismatch resolution) live INSIDE the chrome - persistent and
+        // always visible while a decision is pending - not in a floating modal,
+        // per §10:338 (prominent warning in chrome) and §10:426 (a dedicated
+        // chrome control).
+        let mut chrome_decision: Option<UserDecision> = None;
+        let mut chrome_decline = false;
         egui::TopBottomPanel::top("chrome")
             .frame(chrome_frame())
             .show(ctx, |ui| {
                 draw_chrome(ui, &self.loaded.chrome);
+                self.draw_action_panel(ui, &mut chrome_decision, &mut chrome_decline);
             });
+        if let Some(d) = chrome_decision {
+            self.apply_and_persist(d);
+        } else if chrome_decline {
+            // Decline: no decision persisted; the prompt closes but the chrome
+            // keeps showing the state (first contact / mismatch).
+            self.pin_prompt = None;
+            self.mismatch_prompt = None;
+        }
 
         // A click on an external link this frame requests the handoff dialog.
         let mut requested: Option<Handoff> = None;
@@ -298,6 +547,9 @@ impl eframe::App for App {
             self.handoff = Some(target);
         }
 
+        // The external-link handoff remains a transient modal: it is an action
+        // on publisher content (§03), not a persistent client security state,
+        // so a dismissible dialog is appropriate there.
         self.show_handoff(ctx);
     }
 }
@@ -345,7 +597,11 @@ impl App {
             .show(ctx, |ui| {
                 ui.set_max_width(460.0);
                 // Caution glyph + the trust-boundary notice, in the chrome's
-                // caution tone so the warning reads consistently with the bar.
+                // caution tone. The notice is a wrapping label on its own line:
+                // in a horizontal layout egui would lay it out on a single line
+                // (ignoring max_width) and overflow the window for the long
+                // carrier notice. A glyph prefix on its own line + a wrapped
+                // label keeps the dialog bounded.
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
                     ui.label(
@@ -354,10 +610,19 @@ impl App {
                             .color(Severity::Caution.accent()),
                     );
                     ui.label(
-                        egui::RichText::new(notice)
-                            .color(egui::Color32::from_rgb(0xE6, 0xCF, 0x9a)),
+                        egui::RichText::new("Trust boundary")
+                            .strong()
+                            .color(Severity::Caution.accent()),
                     );
                 });
+                ui.add_space(4.0);
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(notice)
+                            .color(egui::Color32::from_rgb(0xE6, 0xCF, 0x9a)),
+                    )
+                    .wrap(),
+                );
                 ui.add_space(10.0);
                 // The URL in a bordered monospace chip, matching the address
                 // chip in the chrome so it reads as the same kind of element.
@@ -370,10 +635,14 @@ impl App {
                         egui::Color32::from_rgb(0x2c, 0x34, 0x42),
                     ))
                     .show(ui, |ui| {
-                        ui.label(
-                            egui::RichText::new(&url)
-                                .monospace()
-                                .color(egui::Color32::from_rgb(0x9a, 0xB0, 0xC8)),
+                        ui.set_min_width(ui.available_width());
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(&url)
+                                    .monospace()
+                                    .color(egui::Color32::from_rgb(0x9a, 0xB0, 0xC8)),
+                            )
+                            .wrap(),
                         );
                     });
                 ui.add_space(14.0);
@@ -400,6 +669,208 @@ impl App {
             self.handoff = None;
         }
     }
+
+    /// Draw the trust-decision action panel INSIDE the chrome, below the status
+    /// indicators, when a decision is pending. This replaces the floating modal:
+    /// the controls are a persistent, always-visible part of the client chrome
+    /// (§10:338 prominent warning in chrome; §10:426 a dedicated chrome control),
+    /// so the security state and its affordances cannot be dismissed out of view.
+    /// An affirmative button sets `decision`; a decline sets `decline`. No
+    /// passive event writes a decision (§10:308).
+    fn draw_action_panel(
+        &self,
+        ui: &mut egui::Ui,
+        decision: &mut Option<UserDecision>,
+        decline: &mut bool,
+    ) {
+        if let Some(state) = self.pin_prompt.as_ref() {
+            self.draw_pin_panel(ui, &state.pip, decision, decline);
+        } else if let Some(state) = self.mismatch_prompt.as_ref() {
+            self.draw_mismatch_panel(
+                ui,
+                &state.retained_pip,
+                &state.presented_pip,
+                decision,
+                decline,
+            );
+        }
+    }
+
+    /// The first-contact pinning action panel (§10:304, §10:308, §10:312-317),
+    /// drawn in the chrome. Conveys first-time-seen + not-verified + that
+    /// retaining enables change-alerts, shows the full PIP, and offers the
+    /// affirm/decline controls.
+    fn draw_pin_panel(
+        &self,
+        ui: &mut egui::Ui,
+        pip: &str,
+        decision: &mut Option<UserDecision>,
+        decline: &mut bool,
+    ) {
+        action_frame(Severity::Caution).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.label(
+                egui::RichText::new("First contact - retain this publisher's identity?")
+                    .strong()
+                    .color(egui::Color32::from_rgb(0xF2, 0xDC, 0xA0)),
+            );
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(
+                    "You have not seen this publisher before, and its identity is not externally \
+                     verified. Retaining (pinning) it lets this client alert you when the \
+                     publisher's key later changes. The 24-word PIP is shown above - compare it \
+                     out of band before you trust it.",
+                )
+                .size(13.0)
+                .color(egui::Color32::from_rgb(0xD0, 0xD6, 0xDE)),
+            );
+            let _ = pip; // The full PIP is already shown in the chrome above.
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().button_padding = egui::vec2(10.0, 5.0);
+                if ui
+                    .button(egui::RichText::new("Pin this identity (TOFU)").strong())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    *decision = Some(UserDecision::PinFirstContact);
+                }
+                if ui
+                    .button("I have verified the PIP out of band")
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    *decision = Some(UserDecision::ConfirmPip);
+                }
+                if ui
+                    .button("Not now")
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    *decline = true;
+                }
+            });
+        });
+    }
+
+    /// The Changed/mismatch resolution action panel (§10:338, §10:349-353),
+    /// drawn in the chrome. A prominent warning with both full PIPs (prior and
+    /// presented) for out-of-band comparison; confirming replaces the identity
+    /// (optionally externally verified), declining leaves it untouched.
+    fn draw_mismatch_panel(
+        &self,
+        ui: &mut egui::Ui,
+        retained_pip: &str,
+        presented_pip: &str,
+        decision: &mut Option<UserDecision>,
+        decline: &mut bool,
+    ) {
+        action_frame(Severity::Alert).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.label(
+                    egui::RichText::new("\u{26A0}")
+                        .size(16.0)
+                        .color(Severity::Alert.accent()),
+                );
+                ui.label(
+                    egui::RichText::new("Publisher identity changed - resolve before trusting")
+                        .strong()
+                        .color(egui::Color32::from_rgb(0xF0, 0xD8, 0xD8)),
+                );
+            });
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(
+                    "The key presented by this site does not match the identity you previously \
+                     retained. This is expected after a deliberate key rotation, but it is also \
+                     what impersonation or compromise looks like. The stored identity is not \
+                     replaced unless you confirm. Compare both PIPs out of band:",
+                )
+                .size(13.0)
+                .color(egui::Color32::from_rgb(0xF0, 0xD8, 0xD8)),
+            );
+            ui.add_space(6.0);
+            pip_chip(ui, "Previously retained identity", retained_pip);
+            ui.add_space(6.0);
+            pip_chip(ui, "Newly presented identity", presented_pip);
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().button_padding = egui::vec2(10.0, 5.0);
+                if ui
+                    .button(egui::RichText::new("Confirm the new identity").strong())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    *decision = Some(UserDecision::ConfirmNewIdentity);
+                }
+                if ui
+                    .button("I have verified the new PIP out of band")
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    *decision = Some(UserDecision::ConfirmPip);
+                }
+                if ui
+                    .button("Cancel (stay in mismatch)")
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    *decline = true;
+                }
+            });
+        });
+    }
+}
+
+/// The frame for an in-chrome action panel (pin / mismatch), tinted by
+/// severity. Distinct from the publisher content area and the status row, so
+/// the pending decision reads as a prominent, client-owned chrome element.
+fn action_frame(severity: Severity) -> egui::Frame {
+    let (_, bg) = severity.pill_colors();
+    egui::Frame::none()
+        .fill(bg)
+        .rounding(egui::Rounding::same(6.0))
+        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+        .stroke(egui::Stroke::new(1.0, severity.accent().gamma_multiply(0.6)))
+        .outer_margin(egui::Margin {
+            top: 8.0,
+            ..egui::Margin::ZERO
+        })
+}
+
+/// A labeled, bordered monospace chip showing a full PIP (24 words, wrapped,
+/// never truncated). Reused by the in-chrome mismatch panel.
+fn pip_chip(ui: &mut egui::Ui, label: &str, pip: &str) {
+    egui::Frame::none()
+        .fill(egui::Color32::from_rgb(0x15, 0x1a, 0x22))
+        .rounding(egui::Rounding::same(6.0))
+        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+        .stroke(egui::Stroke::new(
+            1.0,
+            egui::Color32::from_rgb(0x2c, 0x34, 0x42),
+        ))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.label(
+                egui::RichText::new(label)
+                    .size(11.0)
+                    .strong()
+                    .color(egui::Color32::from_rgb(0x9a, 0xB6, 0xD8)),
+            );
+            ui.add_space(4.0);
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(pip)
+                        .monospace()
+                        .size(14.0)
+                        .color(egui::Color32::from_rgb(0xE8, 0xEC, 0xF2)),
+                )
+                .wrap(),
+            );
+        });
 }
 
 /// A semantic severity, driving badge colors consistently across the chrome.

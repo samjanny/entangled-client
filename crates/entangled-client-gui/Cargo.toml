@@ -22,15 +22,27 @@ path = "src/lib.rs"
 name = "entangled-client-gui"
 path = "src/main.rs"
 
+[features]
+# Forwards the optional passphrase-encrypted store mode to the store crate so
+# `--store-encrypted` is available when built with this feature.
+encrypted = ["entangled-client-store/encrypted"]
+
 [dependencies]
 entangled-core = { workspace = true }
 entangled-engine = { workspace = true }
 entangled-client = { path = "../entangled-client" }
+entangled-client-store = { path = "../entangled-client-store" }
 eframe = "0.29"
 egui = "0.29"
+# Cheap top-level parse of the manifest's publisher_pubkey to key the store
+# before full verification, and the store path default.
+serde_json = "1"
+directories = "5"
+rpassword = "7"
 
 [dev-dependencies]
 # Used by the load test to derive a Tor v3 onion address from an origin pubkey,
 # so a built manifest passes Stage 9 origin binding.
 data-encoding = "2"
 sha3 = "0.10"
+tempfile = "3"
