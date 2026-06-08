@@ -43,6 +43,19 @@ impl PublisherHistory {
         }
     }
 
+    /// Build a history from records already ordered newest-first - for example,
+    /// loaded from a persistence store. The caller guarantees the ordering; this
+    /// does not re-sort. Pairs with [`records`](Self::records) for round-tripping
+    /// the history through a [`HistoryStore`](crate::io::HistoryStore).
+    pub fn from_records_newest_first(records: Vec<RetainedManifestRecord>) -> PublisherHistory {
+        PublisherHistory { records }
+    }
+
+    /// All retained records, newest-first, for persistence or inspection.
+    pub fn records(&self) -> &[RetainedManifestRecord] {
+        &self.records
+    }
+
     /// Whether any record has been retained.
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()

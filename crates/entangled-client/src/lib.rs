@@ -39,7 +39,10 @@ pub use history::{check_against_history, record_for, PublisherHistory};
 pub use image::{
     verify_image, DecodeError, Decoded, Decoder, ImageBudget, ImageOutcome, NoRetrySet,
 };
-pub use io::{Clock, FixedClock};
+pub use io::{
+    Clock, FixedClock, HistoryStore, IdentityStore, MemoryHistoryStore, MemoryIdentityStore,
+    StoreError, StoreResult,
+};
 pub use pipeline::{verify_content, verify_manifest, Outcome, VerifiedManifest};
 pub use trust::{
     resolve, PersistenceIntent, RequiredAction, Resolution, RetainedIdentity, TrustState,
