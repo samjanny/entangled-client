@@ -1,0 +1,38 @@
+[package]
+name = "entangled-client-store"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Filesystem-backed IdentityStore / HistoryStore for the Entangled v1.0 client. Implements the entangled-client io seams durably, file-per-publisher, with authenticated integrity (HMAC) by default and optional passphrase encryption (AEAD). Reusable by GUI, TUI, and headless shells."
+keywords = ["entangled", "client", "persistence", "tofu", "store"]
+categories = ["filesystem"]
+
+[features]
+# Off by default: the optional passphrase-encrypted store mode (AEAD). The
+# default Integrity mode (HMAC) needs no extra crypto deps beyond hmac+sha2.
+encrypted = ["dep:chacha20poly1305", "dep:argon2"]
+
+[dependencies]
+entangled-client = { path = "../entangled-client" }
+entangled-core = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+data-encoding = "2"
+directories = "5"
+# Integrity mode (default): authenticated MAC over the on-disk payload.
+hmac = "0.12"
+sha2 = "0.10"
+getrandom = "0.2"
+zeroize = "1"
+# Encrypted mode (opt-in): passphrase-derived AEAD.
+chacha20poly1305 = { version = "0.10", optional = true }
+argon2 = { version = "0.5", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+# Used by the history test to derive a valid Tor v3 onion + sign a real manifest.
+sha3 = "0.10"
+data-encoding = "2"

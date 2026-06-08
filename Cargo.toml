@@ -1,6 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["crates/entangled-client", "crates/entangled-client-gui"]
+members = [
+    "crates/entangled-client",
+    "crates/entangled-client-store",
+    "crates/entangled-client-gui",
+]
 
 # Shared dependency pins for all workspace members. The Entangled sibling repos
 # are path dependencies laid out alongside this repo under VSRepoImports/. Paths
