@@ -271,20 +271,47 @@ impl App {
             .open(&mut open)
             .show(ctx, |ui| {
                 ui.set_max_width(460.0);
-                ui.label(
-                    egui::RichText::new(
-                        "This link leaves Entangled for the clearnet. Opening or copying it \
-                         transmits the URL outside the carrier; the destination and any in-path \
-                         observer may learn it was reached from here.",
-                    )
-                    .color(egui::Color32::from_rgb(0xD0, 0xA0, 0x30)),
-                );
-                ui.add_space(8.0);
-                ui.label(egui::RichText::new(&url).monospace());
-                ui.add_space(12.0);
+                // Caution glyph + the trust-boundary notice, in the chrome's
+                // caution tone so the warning reads consistently with the bar.
                 ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    ui.label(
+                        egui::RichText::new("\u{26A0}")
+                            .size(16.0)
+                            .color(Severity::Caution.accent()),
+                    );
+                    ui.label(
+                        egui::RichText::new(
+                            "This link leaves Entangled for the clearnet. Opening or copying it \
+                             transmits the URL outside the carrier; the destination and any \
+                             in-path observer may learn it was reached from here.",
+                        )
+                        .color(egui::Color32::from_rgb(0xE6, 0xCF, 0x9a)),
+                    );
+                });
+                ui.add_space(10.0);
+                // The URL in a bordered monospace chip, matching the address
+                // chip in the chrome so it reads as the same kind of element.
+                egui::Frame::none()
+                    .fill(egui::Color32::from_rgb(0x15, 0x1a, 0x22))
+                    .rounding(egui::Rounding::same(6.0))
+                    .inner_margin(egui::Margin::symmetric(10.0, 7.0))
+                    .stroke(egui::Stroke::new(
+                        1.0,
+                        egui::Color32::from_rgb(0x2c, 0x34, 0x42),
+                    ))
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new(&url)
+                                .monospace()
+                                .color(egui::Color32::from_rgb(0x9a, 0xB0, 0xC8)),
+                        );
+                    });
+                ui.add_space(14.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().button_padding = egui::vec2(12.0, 6.0);
                     if ui
-                        .button("Copy URL")
+                        .button(egui::RichText::new("Copy URL").strong())
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
                     {
@@ -306,129 +333,259 @@ impl App {
     }
 }
 
-/// Draw the always-visible chrome indicators and any conditional warnings.
+/// A semantic severity, driving badge colors consistently across the chrome.
+#[derive(Clone, Copy)]
+enum Severity {
+    Good,
+    Caution,
+    Alert,
+    Neutral,
+}
+
+impl Severity {
+    /// (foreground text, background fill) for a filled pill at this severity.
+    fn pill_colors(self) -> (egui::Color32, egui::Color32) {
+        match self {
+            // Bright, legible text over a deep tint of the same hue.
+            Severity::Good => (
+                egui::Color32::from_rgb(0xB6, 0xF0, 0xC4),
+                egui::Color32::from_rgb(0x1c, 0x3a, 0x28),
+            ),
+            Severity::Caution => (
+                egui::Color32::from_rgb(0xF2, 0xDC, 0xA0),
+                egui::Color32::from_rgb(0x3c, 0x30, 0x12),
+            ),
+            Severity::Alert => (
+                egui::Color32::from_rgb(0xF6, 0xC0, 0xC0),
+                egui::Color32::from_rgb(0x40, 0x1c, 0x1c),
+            ),
+            Severity::Neutral => (
+                egui::Color32::from_rgb(0xC4, 0xCC, 0xD6),
+                egui::Color32::from_rgb(0x24, 0x2b, 0x36),
+            ),
+        }
+    }
+
+    /// The accent (border / dot) color at this severity.
+    fn accent(self) -> egui::Color32 {
+        match self {
+            Severity::Good => egui::Color32::from_rgb(0x4c, 0xc0, 0x6a),
+            Severity::Caution => egui::Color32::from_rgb(0xd0, 0xa0, 0x30),
+            Severity::Alert => egui::Color32::from_rgb(0xe0, 0x50, 0x50),
+            Severity::Neutral => egui::Color32::from_rgb(0x90, 0x98, 0xa4),
+        }
+    }
+}
+
+/// Draw a filled status pill: a colored dot, a small uppercase category label,
+/// and the value, all on a rounded tinted background. Returns the response so
+/// callers can lay several out in a row.
+fn status_pill(
+    ui: &mut egui::Ui,
+    category: &str,
+    value: &str,
+    severity: Severity,
+) -> egui::Response {
+    let (fg, bg) = severity.pill_colors();
+    egui::Frame::none()
+        .fill(bg)
+        .rounding(egui::Rounding::same(999.0)) // fully rounded -> pill
+        .inner_margin(egui::Margin::symmetric(10.0, 5.0))
+        .stroke(egui::Stroke::new(1.0, severity.accent().gamma_multiply(0.5)))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                // Status dot.
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                ui.painter().circle_filled(
+                    rect.center(),
+                    4.0,
+                    severity.accent(),
+                );
+                ui.label(
+                    egui::RichText::new(category.to_ascii_uppercase())
+                        .size(10.5)
+                        .strong()
+                        .color(fg.gamma_multiply(0.8)),
+                );
+                ui.label(egui::RichText::new(value).size(13.0).strong().color(fg));
+            });
+        })
+        .response
+}
+
+/// Draw the always-visible chrome indicators and any conditional warnings: an
+/// honesty strip, a row of status pills (trust, canary, and request state),
+/// a monospace address chip, the PIP identity section, and warning banners.
+/// Publisher content never draws here (section 10 chrome separation).
 fn draw_chrome(ui: &mut egui::Ui, chrome: &ChromeView) {
-    // Honest banner: this is a viewer, not a conforming client (yet).
+    // Honesty strip: still present, but smaller and muted - it's a disclaimer,
+    // not the headline.
     ui.label(
         egui::RichText::new(NOT_A_CLIENT)
-            .small()
-            .color(egui::Color32::from_rgb(0xC0, 0x80, 0x00)),
-    );
-    ui.add_space(10.0);
-
-    // Always-visible compact indicators (section 10), with semantic color.
-    ui.horizontal_wrapped(|ui| {
-        let (label, color) = trust_label(chrome.trust_state);
-        ui.label(egui::RichText::new(label).strong().color(color));
-        ui.separator();
-        let (clabel, ccolor) = canary_label(chrome.canary_state);
-        ui.label(egui::RichText::new(clabel).color(ccolor));
-    });
-    ui.add_space(6.0);
-
-    // The full carrier address, in monospace on its own line so it is never
-    // truncated.
-    ui.label(
-        egui::RichText::new(&chrome.carrier_address_compact)
-            .monospace()
-            .color(egui::Color32::from_rgb(0xB0, 0xB8, 0xC4)),
+            .size(11.0)
+            .color(egui::Color32::from_rgb(0x8a, 0x7a, 0x40)),
     );
     ui.add_space(8.0);
 
-    // PIP, labeled as public identity with the acronym (never "seed phrase").
-    // Section 10 (304, 687): at First contact and Changed/mismatch the user is
-    // being asked to verify identity, so the full 24-word PIP MUST be shown,
-    // not only collapsed. In the other states it may stay behind an expand
-    // control. The PIP is the identity anchor the user compares out of band, so
-    // give it visual prominence.
+    // Status row: trust and canary as filled pills, address as a mono chip,
+    // request-state as a trailing pill when active. Wraps on narrow windows.
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+
+        let (tlabel, tsev) = trust_badge(chrome.trust_state);
+        status_pill(ui, "trust", tlabel, tsev);
+
+        let (clabel, csev) = canary_badge(chrome.canary_state);
+        status_pill(ui, "canary", clabel, csev);
+
+        // Address chip: monospace, in its own subtly bordered rounded box.
+        egui::Frame::none()
+            .fill(egui::Color32::from_rgb(0x15, 0x1a, 0x22))
+            .rounding(egui::Rounding::same(6.0))
+            .inner_margin(egui::Margin::symmetric(10.0, 5.0))
+            .stroke(egui::Stroke::new(
+                1.0,
+                egui::Color32::from_rgb(0x2c, 0x34, 0x42),
+            ))
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new(&chrome.carrier_address_compact)
+                        .monospace()
+                        .size(12.5)
+                        .color(egui::Color32::from_rgb(0x9a, 0xB0, 0xC8)),
+                );
+            });
+
+        if chrome.request_state_active {
+            status_pill(ui, "request", "active", Severity::Caution);
+        }
+    });
+
+    ui.add_space(10.0);
+
+    // PIP card: the identity anchor, always in a prominent bordered card with a
+    // left accent bar. When it must be fully shown, the words are visible; when
+    // it may be collapsed, a disclosure toggles them - but the card framing is
+    // the same so the identity always reads as a first-class element.
+    draw_pip_card(ui, chrome);
+
+    // Warning banners: each warning as a full-width tinted banner with an icon
+    // glyph, far more legible than a red text line.
+    if !chrome.warnings.is_empty() {
+        ui.add_space(10.0);
+    }
+    for warning in &chrome.warnings {
+        draw_warning_banner(ui, *warning);
+        ui.add_space(6.0);
+    }
+}
+
+/// The PIP identity section. Rather than a floating rounded card (which reads
+/// as a widget nested inside the chrome bar), this is a flush section of the
+/// chrome itself: separated by a top divider line, with a short accent tick at
+/// the left to anchor it as the identity element. No perimeter box, so it sits
+/// as part of the bar, not on top of it.
+fn draw_pip_card(ui: &mut egui::Ui, chrome: &ChromeView) {
     let pip_label = format!("{} (PIP)", chrome.pip_label);
-    let pip_color = egui::Color32::from_rgb(0xE6, 0xEA, 0xF0);
+    let accent = egui::Color32::from_rgb(0x6c, 0xa8, 0xff);
+
+    // Top separator: a full-width hairline marking where the status row ends
+    // and the identity section begins.
+    let sep_y = ui.cursor().top();
+    let (left, right) = (ui.max_rect().left(), ui.max_rect().right());
+    ui.painter().line_segment(
+        [egui::pos2(left, sep_y), egui::pos2(right, sep_y)],
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(0x2c, 0x34, 0x42)),
+    );
+    ui.add_space(8.0);
+
+    // Label row, prefixed by a short accent tick (a 3px bar the height of the
+    // label) so the identity reads as a first-class, client-owned element.
+    ui.horizontal(|ui| {
+        let (tick, _) = ui.allocate_exact_size(egui::vec2(3.0, 14.0), egui::Sense::hover());
+        ui.painter()
+            .rect_filled(tick, egui::Rounding::same(1.5), accent);
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(&pip_label)
+                .size(11.0)
+                .strong()
+                .color(egui::Color32::from_rgb(0x9a, 0xB6, 0xD8)),
+        );
+        ui.label(
+            egui::RichText::new("- compare these words out of band")
+                .size(11.0)
+                .italics()
+                .color(egui::Color32::from_rgb(0x6c, 0x78, 0x88)),
+        );
+    });
+    ui.add_space(6.0);
+
     let pip_text = || {
         egui::RichText::new(&chrome.pip)
             .monospace()
             .size(15.0)
-            .color(pip_color)
+            .color(egui::Color32::from_rgb(0xE8, 0xEC, 0xF2))
     };
     if chrome.pip_must_be_fully_shown {
-        // A dedicated, distinct box so the identity phrase stands out.
-        egui::Frame::none()
-            .fill(egui::Color32::from_rgb(0x22, 0x2a, 0x36))
-            .stroke(egui::Stroke::new(
-                1.0,
-                egui::Color32::from_rgb(0x3a, 0x48, 0x5c),
-            ))
-            .rounding(6.0)
-            .inner_margin(egui::Margin::same(8.0))
-            .show(ui, |ui| {
-                ui.label(
-                    egui::RichText::new(&pip_label)
-                        .small()
-                        .strong()
-                        .color(egui::Color32::from_rgb(0xA8, 0xB4, 0xC4)),
-                );
-                ui.add_space(4.0);
-                ui.label(pip_text());
-            });
+        ui.label(pip_text());
     } else {
-        ui.collapsing(pip_label, |ui| {
+        ui.collapsing("show identity phrase", |ui| {
             ui.label(pip_text());
         });
     }
-
-    if !chrome.warnings.is_empty() {
-        ui.add_space(6.0);
-    }
-    for warning in &chrome.warnings {
-        ui.label(
-            egui::RichText::new(warning_label(*warning))
-                .strong()
-                .color(egui::Color32::from_rgb(0xE0, 0x50, 0x50)),
-        );
-    }
-    if chrome.request_state_active {
-        ui.add_space(6.0);
-        ui.label(
-            egui::RichText::new("request state active")
-                .color(egui::Color32::from_rgb(0xC0, 0x80, 0x00)),
-        );
-    }
 }
 
-fn trust_label(state: TrustState) -> (&'static str, egui::Color32) {
-    let green = egui::Color32::from_rgb(0x4c, 0xc0, 0x6a);
-    let yellow = egui::Color32::from_rgb(0xd0, 0xa0, 0x30);
-    let red = egui::Color32::from_rgb(0xe0, 0x50, 0x50);
+/// A full-width warning banner: an alert-tinted rounded bar with a glyph and
+/// the warning text. Historical/stale notes use the gentler caution tone.
+fn draw_warning_banner(ui: &mut egui::Ui, warning: Warning) {
+    let (glyph, text, severity) = match warning {
+        Warning::TrustMismatch => (
+            "\u{26A0}",
+            "Publisher identity changed / mismatch",
+            Severity::Alert,
+        ),
+        Warning::CanaryConflict => ("\u{26A0}", "Canary conflict", Severity::Alert),
+        Warning::CanaryExpired => ("\u{26A0}", "Canary expired", Severity::Alert),
+        Warning::CanaryInvalid => ("\u{26A0}", "Canary invalid", Severity::Alert),
+        Warning::CanaryGap => ("\u{26A0}", "Canary gap observed", Severity::Caution),
+        Warning::HistoricalContent => ("\u{1F552}", "Historical content", Severity::Caution),
+        Warning::StaleCachedContent => ("\u{1F552}", "Stale cached content", Severity::Caution),
+    };
+    let (fg, bg) = severity.pill_colors();
+    egui::Frame::none()
+        .fill(bg)
+        .rounding(egui::Rounding::same(6.0))
+        .inner_margin(egui::Margin::symmetric(10.0, 7.0))
+        .stroke(egui::Stroke::new(1.0, severity.accent().gamma_multiply(0.6)))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.label(egui::RichText::new(glyph).size(14.0).color(severity.accent()));
+                ui.label(egui::RichText::new(text).size(13.0).strong().color(fg));
+            });
+        });
+}
+
+/// Trust state as a short pill value and severity (parallels `trust_label`).
+fn trust_badge(state: TrustState) -> (&'static str, Severity) {
     match state {
-        TrustState::ExternallyVerified => ("trust: externally verified", green),
-        TrustState::TofuPinned => ("trust: TOFU pinned", green),
-        TrustState::FirstContact => ("trust: first contact", yellow),
-        TrustState::ChangedMismatch => ("trust: CHANGED / MISMATCH", red),
+        TrustState::ExternallyVerified => ("externally verified", Severity::Good),
+        TrustState::TofuPinned => ("TOFU pinned", Severity::Good),
+        TrustState::FirstContact => ("first contact", Severity::Caution),
+        TrustState::ChangedMismatch => ("CHANGED / MISMATCH", Severity::Alert),
     }
 }
 
-fn canary_label(state: CanaryState) -> (&'static str, egui::Color32) {
-    let green = egui::Color32::from_rgb(0x4c, 0xc0, 0x6a);
-    let yellow = egui::Color32::from_rgb(0xd0, 0xa0, 0x30);
-    let red = egui::Color32::from_rgb(0xe0, 0x50, 0x50);
-    let gray = egui::Color32::from_rgb(0x90, 0x98, 0xa4);
+/// Canary state as a short pill value and severity (parallels `canary_label`).
+fn canary_badge(state: CanaryState) -> (&'static str, Severity) {
     match state {
-        CanaryState::Fresh => ("canary: fresh", green),
-        CanaryState::NearExpiration => ("canary: near expiration", yellow),
-        CanaryState::Expired => ("canary: expired", red),
-        CanaryState::Invalid => ("canary: invalid", red),
-        CanaryState::Unavailable => ("canary: unavailable", gray),
-    }
-}
-
-fn warning_label(warning: Warning) -> &'static str {
-    match warning {
-        Warning::TrustMismatch => "WARNING: publisher identity changed / mismatch",
-        Warning::CanaryConflict => "WARNING: canary conflict",
-        Warning::CanaryExpired => "WARNING: canary expired",
-        Warning::CanaryInvalid => "WARNING: canary invalid",
-        Warning::CanaryGap => "WARNING: canary gap observed",
-        Warning::HistoricalContent => "historical content",
-        Warning::StaleCachedContent => "stale cached content",
+        CanaryState::Fresh => ("fresh", Severity::Good),
+        CanaryState::NearExpiration => ("near expiration", Severity::Caution),
+        CanaryState::Expired => ("expired", Severity::Alert),
+        CanaryState::Invalid => ("invalid", Severity::Alert),
+        CanaryState::Unavailable => ("unavailable", Severity::Neutral),
     }
 }
 
@@ -466,11 +623,17 @@ fn draw_node(ui: &mut egui::Ui, node: &SceneNode, handoff: &mut Option<String>) 
             ui.add_space(8.0);
         }
         SceneNode::CodeBlock { language: _, text } => {
-            // A subtly boxed monospace block.
+            // A subtly boxed monospace block, stretched to the full content
+            // column width (left/right edges aligned with paragraphs) rather
+            // than shrink-wrapped to the longest line.
             egui::Frame::none()
                 .fill(egui::Color32::from_rgb(0x16, 0x1a, 0x20))
+                .rounding(egui::Rounding::same(6.0))
                 .inner_margin(egui::Margin::same(8.0))
                 .show(ui, |ui| {
+                    // Force the inner ui to occupy the whole available width so
+                    // the frame spans the column.
+                    ui.set_min_width(ui.available_width());
                     ui.add(
                         egui::Label::new(
                             egui::RichText::new(text)
@@ -538,8 +701,11 @@ fn draw_node(ui: &mut egui::Ui, node: &SceneNode, handoff: &mut Option<String>) 
             };
             egui::Frame::none()
                 .fill(egui::Color32::from_rgb(0x16, 0x1a, 0x20))
+                .rounding(egui::Rounding::same(6.0))
                 .inner_margin(egui::Margin::same(8.0))
                 .show(ui, |ui| {
+                    // Span the full content column, like the code block.
+                    ui.set_min_width(ui.available_width());
                     ui.label(egui::RichText::new(format!("[image: {alt}]")).color(muted));
                     if let Some(caption) = &image.caption {
                         ui.label(egui::RichText::new(caption).size(BODY - 2.0).color(muted));
@@ -613,8 +779,11 @@ fn draw_node(ui: &mut egui::Ui, node: &SceneNode, handoff: &mut Option<String>) 
         } => {
             egui::Frame::none()
                 .fill(egui::Color32::from_rgb(0x18, 0x20, 0x18))
+                .rounding(egui::Rounding::same(6.0))
                 .inner_margin(egui::Margin::same(8.0))
                 .show(ui, |ui| {
+                    // Span the full content column, like the code block.
+                    ui.set_min_width(ui.available_width());
                     if let Some(t) = title {
                         ui.label(
                             egui::RichText::new(t)
