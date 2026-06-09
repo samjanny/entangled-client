@@ -24,7 +24,10 @@ fn pin_then_reload_is_tofu_pinned() {
     let retained = store.load_identity(&s).unwrap();
     assert_eq!(
         retained,
-        Some(RetainedIdentity { pubkey: k, externally_verified: false })
+        Some(RetainedIdentity {
+            pubkey: k,
+            externally_verified: false
+        })
     );
     assert_eq!(
         resolve(&k, retained.as_ref(), UserDecision::None).state,
@@ -61,7 +64,10 @@ fn replace_preserves_prior_key_and_verified_flag() {
     {
         let store = FileIdentityStore::new(integrity_root(dir.path()));
         store
-            .apply(&s, &PersistenceIntent::MarkExternallyVerified { pubkey: k1 })
+            .apply(
+                &s,
+                &PersistenceIntent::MarkExternallyVerified { pubkey: k1 },
+            )
             .unwrap();
         store
             .apply(
@@ -97,5 +103,11 @@ fn repin_does_not_demote_verified() {
     store
         .apply(&s, &PersistenceIntent::PinIdentity { pubkey: k })
         .unwrap();
-    assert!(store.load_identity(&s).unwrap().unwrap().externally_verified);
+    assert!(
+        store
+            .load_identity(&s)
+            .unwrap()
+            .unwrap()
+            .externally_verified
+    );
 }

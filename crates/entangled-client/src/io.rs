@@ -164,7 +164,11 @@ impl MemoryIdentityStore {
 
     /// Test helper: the replaced keys retained for `site`, newest-first.
     pub fn replaced_keys(&self, site: &OnionAddress) -> Vec<PublisherPubkey> {
-        self.replaced.borrow().get(site).cloned().unwrap_or_default()
+        self.replaced
+            .borrow()
+            .get(site)
+            .cloned()
+            .unwrap_or_default()
     }
 }
 
@@ -242,7 +246,12 @@ impl MemoryHistoryStore {
 
 impl HistoryStore for MemoryHistoryStore {
     fn load_history(&self, publisher: &PublisherPubkey) -> StoreResult<PublisherHistory> {
-        let records = self.map.borrow().get(publisher).cloned().unwrap_or_default();
+        let records = self
+            .map
+            .borrow()
+            .get(publisher)
+            .cloned()
+            .unwrap_or_default();
         Ok(PublisherHistory::from_records_newest_first(records))
     }
 

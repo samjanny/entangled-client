@@ -143,12 +143,7 @@ fn main() -> ExitCode {
     };
     let store = StoreHandle::open(root);
 
-    let loaded = match build(
-        &cli.manifest,
-        &cli.onion,
-        cli.content.as_deref(),
-        &store,
-    ) {
+    let loaded = match build(&cli.manifest, &cli.onion, cli.content.as_deref(), &store) {
         Ok(l) => l,
         Err(msg) => {
             eprintln!("error: {msg}");
@@ -834,7 +829,10 @@ fn action_frame(severity: Severity) -> egui::Frame {
         .fill(bg)
         .rounding(egui::Rounding::same(6.0))
         .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-        .stroke(egui::Stroke::new(1.0, severity.accent().gamma_multiply(0.6)))
+        .stroke(egui::Stroke::new(
+            1.0,
+            severity.accent().gamma_multiply(0.6),
+        ))
         .outer_margin(egui::Margin {
             top: 8.0,
             ..egui::Margin::ZERO
@@ -931,17 +929,17 @@ fn status_pill(
         .fill(bg)
         .rounding(egui::Rounding::same(999.0)) // fully rounded -> pill
         .inner_margin(egui::Margin::symmetric(10.0, 5.0))
-        .stroke(egui::Stroke::new(1.0, severity.accent().gamma_multiply(0.5)))
+        .stroke(egui::Stroke::new(
+            1.0,
+            severity.accent().gamma_multiply(0.5),
+        ))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 // Status dot.
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                ui.painter().circle_filled(
-                    rect.center(),
-                    4.0,
-                    severity.accent(),
-                );
+                ui.painter()
+                    .circle_filled(rect.center(), 4.0, severity.accent());
                 ui.label(
                     egui::RichText::new(category.to_ascii_uppercase())
                         .size(10.5)
@@ -1098,11 +1096,18 @@ fn draw_warning_banner(ui: &mut egui::Ui, warning: Warning) {
         .fill(bg)
         .rounding(egui::Rounding::same(6.0))
         .inner_margin(egui::Margin::symmetric(10.0, 7.0))
-        .stroke(egui::Stroke::new(1.0, severity.accent().gamma_multiply(0.6)))
+        .stroke(egui::Stroke::new(
+            1.0,
+            severity.accent().gamma_multiply(0.6),
+        ))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
-                ui.label(egui::RichText::new(glyph).size(14.0).color(severity.accent()));
+                ui.label(
+                    egui::RichText::new(glyph)
+                        .size(14.0)
+                        .color(severity.accent()),
+                );
                 ui.label(egui::RichText::new(text).size(13.0).strong().color(fg));
             });
         });
@@ -1148,7 +1153,10 @@ fn draw_canary_block(ui: &mut egui::Ui) -> bool {
     egui::Frame::none()
         .fill(egui::Color32::from_rgb(0x20, 0x18, 0x14))
         .rounding(egui::Rounding::same(8.0))
-        .stroke(egui::Stroke::new(1.0, Severity::Alert.accent().gamma_multiply(0.6)))
+        .stroke(egui::Stroke::new(
+            1.0,
+            Severity::Alert.accent().gamma_multiply(0.6),
+        ))
         .inner_margin(egui::Margin::same(16.0))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
@@ -1199,7 +1207,10 @@ fn draw_override_active_notice(ui: &mut egui::Ui) {
         .fill(egui::Color32::from_rgb(0x3c, 0x30, 0x12))
         .rounding(egui::Rounding::same(6.0))
         .inner_margin(egui::Margin::symmetric(10.0, 7.0))
-        .stroke(egui::Stroke::new(1.0, Severity::Caution.accent().gamma_multiply(0.6)))
+        .stroke(egui::Stroke::new(
+            1.0,
+            Severity::Caution.accent().gamma_multiply(0.6),
+        ))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.horizontal(|ui| {
@@ -1371,9 +1382,7 @@ fn draw_node(ui: &mut egui::Ui, node: &SceneNode, handoff: &mut Option<Handoff>)
                         let tag_clicked = ui
                             .add(
                                 egui::Label::new(
-                                    egui::RichText::new(tag)
-                                        .size(BODY - 2.0)
-                                        .color(muted),
+                                    egui::RichText::new(tag).size(BODY - 2.0).color(muted),
                                 )
                                 .sense(egui::Sense::click()),
                             )

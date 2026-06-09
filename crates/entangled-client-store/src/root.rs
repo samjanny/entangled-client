@@ -128,8 +128,9 @@ impl StoreRoot {
             Protection::Integrity => StoreRoot::open_integrity(base),
             #[cfg(feature = "encrypted")]
             Protection::Encrypted => {
-                let pass = passphrase
-                    .ok_or_else(|| StoreError("encrypted store requires a passphrase".to_owned()))?;
+                let pass = passphrase.ok_or_else(|| {
+                    StoreError("encrypted store requires a passphrase".to_owned())
+                })?;
                 StoreRoot::open_encrypted(base, pass)
             }
             #[cfg(not(feature = "encrypted"))]
@@ -180,8 +181,13 @@ impl StoreRoot {
 
 fn ensure_dirs(base: &Path) -> Result<(), StoreError> {
     for sub in ["", "identities", "history"] {
-        let dir = if sub.is_empty() { base.to_path_buf() } else { base.join(sub) };
-        fs::create_dir_all(&dir).map_err(|e| StoreError(format!("create {}: {e}", dir.display())))?;
+        let dir = if sub.is_empty() {
+            base.to_path_buf()
+        } else {
+            base.join(sub)
+        };
+        fs::create_dir_all(&dir)
+            .map_err(|e| StoreError(format!("create {}: {e}", dir.display())))?;
     }
     Ok(())
 }
@@ -250,7 +256,8 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
             .map_err(|e| StoreError(format!("create temp {}: {e}", tmp.display())))?;
         f.write_all(bytes)
             .map_err(|e| StoreError(format!("write temp: {e}")))?;
-        f.sync_all().map_err(|e| StoreError(format!("sync temp: {e}")))?;
+        f.sync_all()
+            .map_err(|e| StoreError(format!("sync temp: {e}")))?;
         fs::rename(&tmp, path)
             .map_err(|e| StoreError(format!("rename into {}: {e}", path.display())))?;
         Ok(())

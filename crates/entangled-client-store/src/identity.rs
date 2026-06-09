@@ -39,7 +39,8 @@ impl FileIdentityStore {
 
     fn write_dto(&self, site: &OnionAddress, dto: &IdentityDto) -> StoreResult<()> {
         let path = self.root.identity_path(site);
-        let bytes = serde_json::to_vec(dto).map_err(|e| StoreError(format!("encode identity: {e}")))?;
+        let bytes =
+            serde_json::to_vec(dto).map_err(|e| StoreError(format!("encode identity: {e}")))?;
         self.root.write_protected(&path, &bytes)
     }
 }

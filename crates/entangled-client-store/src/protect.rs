@@ -131,8 +131,9 @@ impl Protector {
                     .map_err(|e| StoreError(format!("hmac key: {e}")))?;
                 mac.update(&payload);
                 // Constant-time verify; failure => tampering => fail-closed.
-                mac.verify_slice(&tag)
-                    .map_err(|_| StoreError("integrity check failed (store tampered?)".to_owned()))?;
+                mac.verify_slice(&tag).map_err(|_| {
+                    StoreError("integrity check failed (store tampered?)".to_owned())
+                })?;
                 Ok(payload)
             }
             #[cfg(feature = "encrypted")]
@@ -179,7 +180,10 @@ mod encrypted {
         let env: AeadEnvelope = serde_json::from_slice(on_disk)
             .map_err(|e| StoreError(format!("decode aead envelope: {e}")))?;
         if env.v != AEAD_V {
-            return Err(StoreError(format!("unsupported aead envelope version {}", env.v)));
+            return Err(StoreError(format!(
+                "unsupported aead envelope version {}",
+                env.v
+            )));
         }
         let nonce = b64()
             .decode(env.nonce_b64.as_bytes())
@@ -191,14 +195,16 @@ mod encrypted {
         // Wrong passphrase (wrong key) or tampered ciphertext => AEAD tag fails.
         cipher
             .decrypt(XNonce::from_slice(&nonce), ct.as_ref())
-            .map_err(|_| StoreError("decrypt failed (wrong passphrase or store tampered?)".to_owned()))
+            .map_err(|_| {
+                StoreError("decrypt failed (wrong passphrase or store tampered?)".to_owned())
+            })
     }
 }
 
 /// Derive a 32-byte AEAD key from a passphrase and a per-store salt via Argon2id.
 #[cfg(feature = "encrypted")]
 pub fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32], StoreError> {
-    use argon2::{Argon2, Algorithm, Params, Version};
+    use argon2::{Algorithm, Argon2, Params, Version};
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, Params::default());
     let mut key = [0u8; 32];
     argon

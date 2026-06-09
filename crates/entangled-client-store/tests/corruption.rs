@@ -16,7 +16,10 @@ fn missing_identity_is_first_contact() {
     let store = FileIdentityStore::new(integrity_root(dir.path()));
     let (k, s) = (key(9), site(9));
     assert_eq!(store.load_identity(&s).unwrap(), None);
-    assert_eq!(resolve(&k, None, UserDecision::None).state, TrustState::FirstContact);
+    assert_eq!(
+        resolve(&k, None, UserDecision::None).state,
+        TrustState::FirstContact
+    );
 }
 
 #[test]

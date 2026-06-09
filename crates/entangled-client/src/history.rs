@@ -132,8 +132,8 @@ pub fn check_against_history(
     // the symmetric exemption, so skip it on a payload-hash match to avoid a
     // spurious E_CANARY_RUNTIME_REUSE. (A different payload re-using the runtime
     // key still trips the check, since its hash differs.)
-    let is_same_payload_refetch = newest
-        .is_some_and(|n| n.manifest_payload_hash == record.manifest_payload_hash);
+    let is_same_payload_refetch =
+        newest.is_some_and(|n| n.manifest_payload_hash == record.manifest_payload_hash);
     if !is_same_payload_refetch {
         check_runtime_pubkey_rotation(
             &record.runtime_pubkey,

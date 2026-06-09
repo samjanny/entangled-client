@@ -13,11 +13,11 @@ use entangled_core::document::{build_content, build_manifest, UnsignedContent, U
 use entangled_core::types::blocks::HeadingLevel;
 use entangled_core::types::canary::Canary;
 use entangled_core::types::keys::{OriginPubkey, SpecVersion};
+use entangled_core::types::link::LinkTarget;
 use entangled_core::types::manifest::{Carrier, OnionAddress, Origin};
 use entangled_core::types::meta::Meta;
 use entangled_core::types::slug::Slug;
 use entangled_core::types::timestamp::EntangledTimestamp;
-use entangled_core::types::link::LinkTarget;
 use entangled_core::types::{Block, EntangledPath, InlineElement, NoteVariant, TextMark};
 
 fn ts(s: &str) -> EntangledTimestamp {

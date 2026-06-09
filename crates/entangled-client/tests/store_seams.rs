@@ -81,7 +81,10 @@ fn pip_confirmed_first_contact_reloads_externally_verified() {
     let store = MemoryIdentityStore::new();
     let (k, s) = (key(2), site(2));
     let r = resolve(&k, None, UserDecision::ConfirmPip);
-    assert_eq!(r.intent, PersistenceIntent::MarkExternallyVerified { pubkey: k });
+    assert_eq!(
+        r.intent,
+        PersistenceIntent::MarkExternallyVerified { pubkey: k }
+    );
     store.apply(&s, &r.intent).unwrap();
 
     let retained = store.load_identity(&s).unwrap();
@@ -107,7 +110,10 @@ fn tofu_then_pip_elevates_without_clobbering() {
         .unwrap();
 
     let retained = store.load_identity(&s).unwrap().unwrap();
-    assert!(retained.externally_verified, "re-pin must not demote a verified key");
+    assert!(
+        retained.externally_verified,
+        "re-pin must not demote a verified key"
+    );
     let r = resolve(&k, Some(&retained), UserDecision::None);
     assert_eq!(r.state, TrustState::ExternallyVerified);
 }
@@ -121,7 +127,10 @@ fn pip_confirmed_replacement_survives_reload() {
     let (k1, k2, s) = (key(1), key(2), site(1));
     // k1 was previously externally verified for this site.
     store
-        .apply(&s, &PersistenceIntent::MarkExternallyVerified { pubkey: k1 })
+        .apply(
+            &s,
+            &PersistenceIntent::MarkExternallyVerified { pubkey: k1 },
+        )
         .unwrap();
     // A different key k2 is presented for the SAME site; user confirms via PIP.
     let r = resolve(
@@ -161,7 +170,10 @@ fn history_append_then_reload_holds_anti_downgrade() {
         .append_record(&p, &record("2026-06-05T00:00:00Z", 0xA1, 0x11))
         .unwrap();
     let loaded = store.load_history(&p).unwrap();
-    assert_eq!(loaded.newest().map(|r| r.issued_at), Some(ts("2026-06-05T00:00:00Z")));
+    assert_eq!(
+        loaded.newest().map(|r| r.issued_at),
+        Some(ts("2026-06-05T00:00:00Z"))
+    );
     assert!(!loaded.is_empty());
 }
 
@@ -186,5 +198,8 @@ fn missing_identity_is_first_contact() {
     let store = MemoryIdentityStore::new();
     let (k, s) = (key(9), site(9));
     assert_eq!(store.load_identity(&s).unwrap(), None);
-    assert_eq!(resolve(&k, None, UserDecision::None).state, TrustState::FirstContact);
+    assert_eq!(
+        resolve(&k, None, UserDecision::None).state,
+        TrustState::FirstContact
+    );
 }

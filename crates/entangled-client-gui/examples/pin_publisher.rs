@@ -20,7 +20,9 @@ fn main() {
     let store_dir = args
         .next()
         .expect("usage: pin_publisher <store-dir> <onion-address> [verified]");
-    let onion = args.next().expect("usage: pin_publisher <store-dir> <onion-address> [verified]");
+    let onion = args
+        .next()
+        .expect("usage: pin_publisher <store-dir> <onion-address> [verified]");
     let verified = args.next().as_deref() == Some("verified");
 
     // The fixture's publisher key (seed 0xB1) for the fixture site.
@@ -28,8 +30,12 @@ fn main() {
     let site = OnionAddress::try_from(onion.as_str()).expect("valid onion");
 
     let root = Arc::new(
-        StoreRoot::open(std::path::PathBuf::from(store_dir), &Protection::Integrity, None)
-            .expect("open store"),
+        StoreRoot::open(
+            std::path::PathBuf::from(store_dir),
+            &Protection::Integrity,
+            None,
+        )
+        .expect("open store"),
     );
     let store = FileIdentityStore::new(root);
 
@@ -43,6 +49,10 @@ fn main() {
         "pinned publisher {} for site {} ({})",
         publisher,
         site.as_str(),
-        if verified { "externally verified" } else { "TOFU" }
+        if verified {
+            "externally verified"
+        } else {
+            "TOFU"
+        }
     );
 }

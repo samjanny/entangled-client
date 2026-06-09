@@ -26,8 +26,8 @@ use entangled_client::trust::{
     resolve, PersistenceIntent, RequiredAction, RetainedIdentity, UserDecision,
 };
 use entangled_client::{Clock, PublisherHistory};
-use entangled_core::types::PublisherPubkey;
 use entangled_core::types::OnionAddress;
+use entangled_core::types::PublisherPubkey;
 use entangled_core::validation::canary::{CanaryState, RetainedManifestRecord};
 use entangled_engine::Scene;
 

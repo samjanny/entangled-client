@@ -45,8 +45,10 @@ fn manifest(issued_at: &str, next_expected: &str, runtime_seed: u8) -> (Manifest
     let origin_pk_bytes = *PublisherSigningKey::from_seed(&[0xB2; 32])
         .verifying_key()
         .as_bytes();
-    let onion = entangled_core::types::manifest::OnionAddress::try_from(onion_for(&origin_pk_bytes).as_str())
-        .expect("onion");
+    let onion = entangled_core::types::manifest::OnionAddress::try_from(
+        onion_for(&origin_pk_bytes).as_str(),
+    )
+    .expect("onion");
     let unsigned = UnsignedManifest {
         spec_version: SpecVersion,
         publisher_pubkey: publisher_key.verifying_key(),
@@ -84,7 +86,10 @@ fn onion_for(pubkey: &[u8; 32]) -> String {
     payload[..32].copy_from_slice(pubkey);
     payload[32..34].copy_from_slice(&[digest[0], digest[1]]);
     payload[34] = 0x03;
-    format!("{}.onion", data_encoding::BASE32.encode(&payload).to_ascii_lowercase())
+    format!(
+        "{}.onion",
+        data_encoding::BASE32.encode(&payload).to_ascii_lowercase()
+    )
 }
 
 #[test]

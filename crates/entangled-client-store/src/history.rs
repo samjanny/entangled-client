@@ -63,7 +63,8 @@ impl HistoryStore for FileHistoryStore {
             records,
         };
         let path = self.root.history_path(publisher);
-        let bytes = serde_json::to_vec(&dto).map_err(|e| StoreError(format!("encode history: {e}")))?;
+        let bytes =
+            serde_json::to_vec(&dto).map_err(|e| StoreError(format!("encode history: {e}")))?;
         self.root.write_protected(&path, &bytes)
     }
 }

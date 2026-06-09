@@ -54,7 +54,10 @@ impl IdentityDto {
     /// Validate the schema version after deserialization. Unknown => corruption.
     pub fn check_version(&self) -> Result<(), StoreError> {
         if self.v != IDENTITY_V {
-            return Err(StoreError(format!("unsupported identity record version {}", self.v)));
+            return Err(StoreError(format!(
+                "unsupported identity record version {}",
+                self.v
+            )));
         }
         Ok(())
     }
@@ -114,7 +117,10 @@ impl HistoryDto {
     /// Validate the schema version after deserialization.
     pub fn check_version(&self) -> Result<(), StoreError> {
         if self.v != HISTORY_V {
-            return Err(StoreError(format!("unsupported history version {}", self.v)));
+            return Err(StoreError(format!(
+                "unsupported history version {}",
+                self.v
+            )));
         }
         Ok(())
     }
