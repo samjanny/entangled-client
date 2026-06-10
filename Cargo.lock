@@ -1146,6 +1146,7 @@ dependencies = [
  "data-encoding",
  "entangled-core",
  "entangled-engine",
+ "serde_json",
  "sha3",
 ]
 

@@ -40,6 +40,16 @@ jobs:
         with:
           repository: samjanny/entangled-engine
           path: entangled-engine
+      - name: Checkout spec corpus
+        # Pinned in lockstep with entangled-core's SPEC_REVISION (the
+        # entangled-api checkout above tracks it): the image conformance
+        # harness asserts corpus.rc_target equals that constant, so a drift
+        # fails CI loudly instead of skipping silently.
+        uses: actions/checkout@v4
+        with:
+          repository: samjanny/entangled
+          ref: v1.0-rc.52
+          path: docs-spec
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
