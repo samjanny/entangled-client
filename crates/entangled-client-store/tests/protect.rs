@@ -13,7 +13,7 @@ use common::{key, site};
 use std::sync::Arc;
 
 use entangled_client::trust::PersistenceIntent;
-use entangled_client::IdentityStore;
+use entangled_client::{IdentityStore, RetainedProvenance};
 use entangled_client_store::{FileIdentityStore, Protection, StoreRoot};
 
 fn encrypted_store(dir: &std::path::Path, pass: &str) -> FileIdentityStore {
@@ -33,10 +33,10 @@ fn encrypted_round_trip_with_correct_passphrase() {
             .apply(&s, &PersistenceIntent::MarkExternallyVerified { pubkey: k })
             .unwrap();
     }
-    // Reopen with the same passphrase -> loads, externally_verified preserved.
+    // Reopen with the same passphrase -> loads, provenance preserved.
     let store = encrypted_store(dir.path(), "correct horse battery staple");
     let id = store.load_identity(&s).unwrap().unwrap();
-    assert!(id.externally_verified);
+    assert_eq!(id.provenance, RetainedProvenance::ExternallyVerified);
 }
 
 #[test]

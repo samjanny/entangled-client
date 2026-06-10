@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use entangled_client::trust::{PersistenceIntent, RetainedIdentity};
+use entangled_client::trust::{PersistenceIntent, RetainedIdentity, RetainedProvenance};
 use entangled_client::{IdentityStore, StoreError, StoreResult};
 use entangled_core::types::manifest::OnionAddress;
 
@@ -47,34 +47,60 @@ impl FileIdentityStore {
 
 impl IdentityStore for FileIdentityStore {
     fn load_identity(&self, site: &OnionAddress) -> StoreResult<Option<RetainedIdentity>> {
-        Ok(self.load_dto(site)?.map(|d| d.to_identity()))
+        self.load_dto(site)?.map(|d| d.to_identity()).transpose()
     }
 
     fn apply(&self, site: &OnionAddress, intent: &PersistenceIntent) -> StoreResult<()> {
         match intent {
             PersistenceIntent::None => Ok(()),
-            PersistenceIntent::PinIdentity { pubkey } => {
-                // Non-destructive: a re-pin of an existing (possibly verified)
-                // site record must not demote it. Only create if absent.
+            PersistenceIntent::RecordObservation { pubkey } => {
+                // The automatic first-contact observation (section 10:298):
+                // created only when nothing is retained for the site. Never
+                // overwrites or demotes an existing record of any provenance.
                 if self.load_dto(site)?.is_none() {
                     let id = RetainedIdentity {
                         pubkey: *pubkey,
-                        externally_verified: false,
+                        provenance: RetainedProvenance::Observed,
                     };
                     self.write_dto(site, &IdentityDto::new(&id, Vec::new()))?;
                 }
                 Ok(())
             }
+            PersistenceIntent::PinIdentity { pubkey } => {
+                // Non-destructive: a pin creates the record, or upgrades an
+                // observed-only record to a pin. It never demotes an existing
+                // pinned or verified record.
+                match self.load_dto(site)? {
+                    None => {
+                        let id = RetainedIdentity {
+                            pubkey: *pubkey,
+                            provenance: RetainedProvenance::Pinned,
+                        };
+                        self.write_dto(site, &IdentityDto::new(&id, Vec::new()))
+                    }
+                    Some(dto) => {
+                        let existing = dto.to_identity()?;
+                        if existing.provenance == RetainedProvenance::Observed {
+                            let id = RetainedIdentity {
+                                pubkey: *pubkey,
+                                provenance: RetainedProvenance::Pinned,
+                            };
+                            self.write_dto(site, &IdentityDto::new(&id, dto.replaced_pubkeys))?;
+                        }
+                        Ok(())
+                    }
+                }
+            }
             PersistenceIntent::MarkExternallyVerified { pubkey } => {
-                // Read-modify-write: keep replaced_pubkeys, set the flag. Covers
-                // both first-contact-PIP (create) and TOFU->verified (flip).
+                // Read-modify-write: keep replaced_pubkeys, raise the provenance.
+                // Covers first-contact-PIP (create) and observed/TOFU->verified.
                 let replaced = self
                     .load_dto(site)?
                     .map(|d| d.replaced_pubkeys)
                     .unwrap_or_default();
                 let id = RetainedIdentity {
                     pubkey: *pubkey,
-                    externally_verified: true,
+                    provenance: RetainedProvenance::ExternallyVerified,
                 };
                 self.write_dto(site, &IdentityDto::new(&id, replaced))
             }
@@ -85,7 +111,9 @@ impl IdentityStore for FileIdentityStore {
             } => {
                 // Same site, new key: carry forward any prior replaced keys with
                 // the just-replaced key newest-first (never lost), and write the
-                // new active identity into the SAME site file.
+                // new active identity into the SAME site file. A confirmed
+                // replacement is an explicit decision: a pin, or a verification
+                // when the user confirmed the PIP while resolving.
                 let mut replaced_pubkeys = self
                     .load_dto(site)?
                     .map(|d| d.replaced_pubkeys)
@@ -93,7 +121,11 @@ impl IdentityStore for FileIdentityStore {
                 replaced_pubkeys.insert(0, *replaced);
                 let id = RetainedIdentity {
                     pubkey: *new_pubkey,
-                    externally_verified: *externally_verified,
+                    provenance: if *externally_verified {
+                        RetainedProvenance::ExternallyVerified
+                    } else {
+                        RetainedProvenance::Pinned
+                    },
                 };
                 self.write_dto(site, &IdentityDto::new(&id, replaced_pubkeys))
             }

@@ -12,6 +12,10 @@
 //! - a manifest from a publisher with no retained record is **First contact**;
 //!   it is never silently pinned. Pinning requires an explicit affirmative user
 //!   decision (no passive event pins);
+//! - first contact records an automatic **observation** (§10:298): a retained
+//!   record with `Observed` provenance that arms Changed/mismatch detection on
+//!   later visits without ever becoming a pin by itself. A matching revisit of
+//!   an observed-only record stays First contact, prompt included;
 //! - a retained identity that matches the presented key stays in its retained
 //!   state with no transition;
 //! - a retained identity against a *different* presented key is
@@ -42,18 +46,39 @@ pub enum TrustState {
     ChangedMismatch,
 }
 
+/// How a retained record was established (section 10).
+///
+/// Section 10 distinguishes the observation record - created automatically at
+/// first contact once the pipeline through Stage 9 succeeds, "a retained
+/// observation used to detect later changes" (§10:298) - from the records
+/// explicit user decisions create: the TOFU pin, which MUST NOT happen without
+/// an affirmative response to the pinning prompt (§10:308), and the externally
+/// verified record. All three arm Changed/mismatch detection; they differ in
+/// the trust state a matching revisit resolves to. An observed-only record
+/// keeps the state at First contact (the pin prompt remains), so retention for
+/// change detection never silently becomes a pin.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RetainedProvenance {
+    /// Recorded automatically at first contact, with no user decision.
+    Observed,
+    /// The user explicitly affirmed the pinning prompt.
+    Pinned,
+    /// The user externally verified the key against its PIP.
+    ExternallyVerified,
+}
+
 /// What the client has retained for a publisher profile.
 ///
 /// The shell loads this (a later tranche, behind a store trait); here it is the
 /// input the machine resolves against. `None` at the call site means first
-/// contact.
+/// contact with no prior observation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RetainedIdentity {
     /// The retained publisher key.
     pub pubkey: PublisherPubkey,
-    /// Whether the user externally verified it against a PIP. `false` is a
-    /// plain TOFU pin.
-    pub externally_verified: bool,
+    /// How the record was established: automatic observation, explicit pin, or
+    /// external PIP verification.
+    pub provenance: RetainedProvenance,
 }
 
 /// The user's decision relevant to this resolution, gathered by the chrome from
@@ -96,9 +121,17 @@ pub enum RequiredAction {
 /// these are produced only for a manifest the caller has already verified.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PersistenceIntent {
-    /// Persist nothing. (First contact before the user pins; an unresolved
-    /// mismatch - the retained identity is left untouched.)
+    /// Persist nothing. (A matching revisit that changes nothing; an
+    /// unresolved mismatch - the retained identity is left untouched.)
     None,
+    /// Record the automatic first-contact observation for `pubkey` (§10:298).
+    /// Created with no user decision once the manifest has passed the pipeline
+    /// through Stage 9; arms Changed/mismatch detection without pinning. The
+    /// store MUST NOT let this overwrite or demote an existing record.
+    RecordObservation {
+        /// The key observed at first contact.
+        pubkey: PublisherPubkey,
+    },
     /// Record a new TOFU-pinned observation for `pubkey`.
     PinIdentity {
         /// The key to retain.
@@ -182,12 +215,14 @@ fn first_contact(presented: &PublisherPubkey, decision: UserDecision) -> Resolut
             intent: PersistenceIntent::PinIdentity { pubkey: *presented },
         },
         // No decision (or a decision that does not apply here): remain First
-        // contact, show the pinning prompt, persist nothing. No passive pin.
+        // contact, show the pinning prompt, and record the automatic
+        // observation (§10:298) so a later identity change is detectable. No
+        // passive pin: the record's provenance is Observed, not Pinned.
         UserDecision::None | UserDecision::ConfirmNewIdentity | UserDecision::RejectNewIdentity => {
             Resolution {
                 state: TrustState::FirstContact,
                 action: RequiredAction::PinPrompt,
-                intent: PersistenceIntent::None,
+                intent: PersistenceIntent::RecordObservation { pubkey: *presented },
             }
         }
     }
@@ -199,23 +234,49 @@ fn matched(
     retained: &RetainedIdentity,
     decision: UserDecision,
 ) -> Resolution {
-    // A PIP confirmation elevates a TOFU pin to externally verified.
-    if decision == UserDecision::ConfirmPip && !retained.externally_verified {
+    // A PIP confirmation elevates an observation or a TOFU pin to externally
+    // verified.
+    if decision == UserDecision::ConfirmPip
+        && retained.provenance != RetainedProvenance::ExternallyVerified
+    {
         return Resolution {
             state: TrustState::ExternallyVerified,
             action: RequiredAction::None,
             intent: PersistenceIntent::MarkExternallyVerified { pubkey: *presented },
         };
     }
-    // Otherwise no transition: stay in the retained state, persist nothing.
-    Resolution {
-        state: if retained.externally_verified {
-            TrustState::ExternallyVerified
-        } else {
-            TrustState::TofuPinned
+    // An affirmative pin against an observed-only record: the pinning prompt
+    // is still showing for this key (§10:308), and the user has now answered
+    // it. Upgrade the observation to a pin.
+    if decision == UserDecision::PinFirstContact
+        && retained.provenance == RetainedProvenance::Observed
+    {
+        return Resolution {
+            state: TrustState::TofuPinned,
+            action: RequiredAction::None,
+            intent: PersistenceIntent::PinIdentity { pubkey: *presented },
+        };
+    }
+    // Otherwise no transition: stay in the state the provenance implies,
+    // persist nothing. An observed-only record keeps the state at First
+    // contact with the pinning prompt: retention for change detection never
+    // silently becomes a pin (§10:308).
+    match retained.provenance {
+        RetainedProvenance::Observed => Resolution {
+            state: TrustState::FirstContact,
+            action: RequiredAction::PinPrompt,
+            intent: PersistenceIntent::None,
         },
-        action: RequiredAction::None,
-        intent: PersistenceIntent::None,
+        RetainedProvenance::Pinned => Resolution {
+            state: TrustState::TofuPinned,
+            action: RequiredAction::None,
+            intent: PersistenceIntent::None,
+        },
+        RetainedProvenance::ExternallyVerified => Resolution {
+            state: TrustState::ExternallyVerified,
+            action: RequiredAction::None,
+            intent: PersistenceIntent::None,
+        },
     }
 }
 
@@ -287,9 +348,11 @@ fn mismatch(
 /// The Stage 7 info codes mark transitions and observations, not steady
 /// states:
 ///
-/// - `I_TRUST_FIRST_CONTACT` for a first-contact resolution of a previously
-///   unknown publisher identity, including the fresh first contact produced by
-///   a user-confirmed identity replacement;
+/// - `I_TRUST_FIRST_CONTACT` when a first-contact observation is recorded for
+///   a previously unknown publisher identity (§10:298, §11), including the
+///   fresh first contact produced by a user-confirmed identity replacement. A
+///   matching revisit of an observed-only record stays First contact but
+///   records nothing new and surfaces no event;
 /// - `I_TRUST_TOFU_PINNED` when an explicit user decision pins the identity;
 /// - `I_TRUST_VERIFIED` when the user externally verifies the key against its
 ///   PIP, whether from first contact, from a TOFU pin, or while resolving a
@@ -304,7 +367,11 @@ pub fn trust_diagnostic(resolution: &Resolution, decision: UserDecision) -> Opti
         } else {
             DiagnosticCode::ETrustMismatch
         }),
-        TrustState::FirstContact => Some(DiagnosticCode::ITrustFirstContact),
+        TrustState::FirstContact => match resolution.intent {
+            PersistenceIntent::RecordObservation { .. }
+            | PersistenceIntent::ReplaceIdentity { .. } => Some(DiagnosticCode::ITrustFirstContact),
+            _ => None,
+        },
         TrustState::TofuPinned => match resolution.intent {
             PersistenceIntent::PinIdentity { .. } => Some(DiagnosticCode::ITrustTofuPinned),
             _ => None,

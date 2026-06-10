@@ -6,7 +6,7 @@ mod common;
 use common::{integrity_root, key, site};
 
 use entangled_client::trust::{resolve, PersistenceIntent, TrustState, UserDecision};
-use entangled_client::{IdentityStore, RetainedIdentity};
+use entangled_client::{IdentityStore, RetainedIdentity, RetainedProvenance};
 use entangled_client_store::FileIdentityStore;
 
 #[test]
@@ -26,7 +26,7 @@ fn pin_then_reload_is_tofu_pinned() {
         retained,
         Some(RetainedIdentity {
             pubkey: k,
-            externally_verified: false
+            provenance: RetainedProvenance::Pinned
         })
     );
     assert_eq!(
@@ -49,7 +49,7 @@ fn externally_verified_survives_reload() {
     }
     let store = FileIdentityStore::new(integrity_root(dir.path()));
     let retained = store.load_identity(&s).unwrap().unwrap();
-    assert!(retained.externally_verified);
+    assert_eq!(retained.provenance, RetainedProvenance::ExternallyVerified);
     assert_eq!(
         resolve(&k, Some(&retained), UserDecision::None).state,
         TrustState::ExternallyVerified
@@ -84,7 +84,7 @@ fn replace_preserves_prior_key_and_verified_flag() {
     // The site now resolves to k2 as the active, externally-verified identity.
     let r2 = store.load_identity(&s).unwrap().unwrap();
     assert_eq!(r2.pubkey, k2);
-    assert!(r2.externally_verified);
+    assert_eq!(r2.provenance, RetainedProvenance::ExternallyVerified);
     assert_eq!(
         resolve(&k2, Some(&r2), UserDecision::None).state,
         TrustState::ExternallyVerified
@@ -103,11 +103,8 @@ fn repin_does_not_demote_verified() {
     store
         .apply(&s, &PersistenceIntent::PinIdentity { pubkey: k })
         .unwrap();
-    assert!(
-        store
-            .load_identity(&s)
-            .unwrap()
-            .unwrap()
-            .externally_verified
+    assert_eq!(
+        store.load_identity(&s).unwrap().unwrap().provenance,
+        RetainedProvenance::ExternallyVerified
     );
 }

@@ -31,7 +31,7 @@ use entangled_core::types::{EntangledTimestamp, OnionAddress, PublisherPubkey};
 use entangled_core::validation::canary::RetainedManifestRecord;
 
 use crate::history::PublisherHistory;
-use crate::trust::{PersistenceIntent, RetainedIdentity};
+use crate::trust::{PersistenceIntent, RetainedIdentity, RetainedProvenance};
 
 /// Source of the current time.
 ///
@@ -180,30 +180,48 @@ impl IdentityStore for MemoryIdentityStore {
     fn apply(&self, site: &OnionAddress, intent: &PersistenceIntent) -> StoreResult<()> {
         match intent {
             PersistenceIntent::None => {}
-            PersistenceIntent::PinIdentity { pubkey } => {
-                // Non-destructive: a re-pin of an already-verified site must not
-                // demote it back to a plain TOFU pin.
+            PersistenceIntent::RecordObservation { pubkey } => {
+                // The automatic first-contact observation (§10:298): created
+                // only when nothing is retained. Never overwrites or demotes an
+                // existing record of any provenance.
                 self.map
                     .borrow_mut()
                     .entry(site.clone())
                     .or_insert(RetainedIdentity {
                         pubkey: *pubkey,
-                        externally_verified: false,
+                        provenance: RetainedProvenance::Observed,
+                    });
+            }
+            PersistenceIntent::PinIdentity { pubkey } => {
+                // Non-destructive: a pin upgrades an observed-only record but
+                // never demotes an already-verified site back to a plain pin.
+                self.map
+                    .borrow_mut()
+                    .entry(site.clone())
+                    .and_modify(|r| {
+                        if r.provenance == RetainedProvenance::Observed {
+                            r.pubkey = *pubkey;
+                            r.provenance = RetainedProvenance::Pinned;
+                        }
+                    })
+                    .or_insert(RetainedIdentity {
+                        pubkey: *pubkey,
+                        provenance: RetainedProvenance::Pinned,
                     });
             }
             PersistenceIntent::MarkExternallyVerified { pubkey } => {
-                // Covers both first-contact-PIP (insert) and TOFU->verified
-                // elevation (flip flag) without ever clobbering the flag back.
+                // Covers first-contact-PIP (insert) and observed/TOFU->verified
+                // elevation without ever clobbering the provenance back down.
                 self.map
                     .borrow_mut()
                     .entry(site.clone())
                     .and_modify(|r| {
                         r.pubkey = *pubkey;
-                        r.externally_verified = true;
+                        r.provenance = RetainedProvenance::ExternallyVerified;
                     })
                     .or_insert(RetainedIdentity {
                         pubkey: *pubkey,
-                        externally_verified: true,
+                        provenance: RetainedProvenance::ExternallyVerified,
                     });
             }
             PersistenceIntent::ReplaceIdentity {
@@ -217,12 +235,18 @@ impl IdentityStore for MemoryIdentityStore {
                     .or_default()
                     .insert(0, *replaced);
                 // The replaced key is no longer the site's active identity; it is
-                // preserved in `replaced`. The site slot now holds the new key.
+                // preserved in `replaced`. The site slot now holds the new key. A
+                // confirmed replacement is an explicit decision, so the record is
+                // a pin (or a verification when the user confirmed the PIP too).
                 self.map.borrow_mut().insert(
                     site.clone(),
                     RetainedIdentity {
                         pubkey: *new_pubkey,
-                        externally_verified: *externally_verified,
+                        provenance: if *externally_verified {
+                            RetainedProvenance::ExternallyVerified
+                        } else {
+                            RetainedProvenance::Pinned
+                        },
                     },
                 );
             }

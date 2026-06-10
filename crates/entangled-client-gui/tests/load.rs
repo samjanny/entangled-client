@@ -15,7 +15,8 @@ use entangled_core::validation::canary::CanaryState;
 use sha3::{Digest, Sha3_256};
 
 use entangled_client::trust::{
-    PersistenceIntent, RequiredAction, RetainedIdentity, TrustState, UserDecision,
+    PersistenceIntent, RequiredAction, RetainedIdentity, RetainedProvenance, TrustState,
+    UserDecision,
 };
 use entangled_client::{FixedClock, PublisherHistory};
 use entangled_client_gui::load;
@@ -177,7 +178,7 @@ fn returning_visitor_with_pin_resolves_tofu_pinned() {
     let clock = FixedClock(ts("2026-05-07T00:00:00Z"));
     let retained = RetainedIdentity {
         pubkey: fixture_publisher(),
-        externally_verified: false,
+        provenance: RetainedProvenance::Pinned,
     };
     let loaded = load(
         &manifest,
@@ -200,7 +201,7 @@ fn returning_visitor_externally_verified_is_not_downgraded() {
     let clock = FixedClock(ts("2026-05-07T00:00:00Z"));
     let retained = RetainedIdentity {
         pubkey: fixture_publisher(),
-        externally_verified: true,
+        provenance: RetainedProvenance::ExternallyVerified,
     };
     let loaded = load(
         &manifest,
@@ -224,7 +225,7 @@ fn changed_key_yields_mismatch_warning() {
     let other_key = PublisherSigningKey::from_seed(&[0xC1; 32]).verifying_key();
     let retained = RetainedIdentity {
         pubkey: other_key,
-        externally_verified: false,
+        provenance: RetainedProvenance::Pinned,
     };
     let loaded = load(
         &manifest,

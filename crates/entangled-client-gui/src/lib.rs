@@ -49,6 +49,13 @@ pub struct Loaded {
     pub retained: Option<RetainedIdentity>,
     /// Which prompt the shell must drive this load.
     pub required_action: RequiredAction,
+    /// The load-time persistence intent. On a fresh first contact this is the
+    /// automatic observation record of section 10:298 (created with no user
+    /// decision once the manifest passed the pipeline); the shell MUST apply
+    /// it via its identity store right after a successful load, or a later
+    /// identity change at this site would go undetected. Decisions the user
+    /// takes afterwards flow through [`Loaded::apply_decision`].
+    pub initial_intent: PersistenceIntent,
     /// The accepted manifest's record, for the binary to append to the history
     /// store after the user pins/confirms (persistence ordering: the manifest
     /// already verified). `None` only if the record could not be derived.
@@ -149,6 +156,7 @@ pub fn load(
         site: fetched_address.clone(),
         retained: retained.copied(),
         required_action: resolution.action,
+        initial_intent: resolution.intent,
         record,
         canary_state: verified.canary_state,
         compact_address,

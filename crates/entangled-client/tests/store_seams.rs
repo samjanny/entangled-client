@@ -18,6 +18,7 @@ use sha3::{Digest, Sha3_256};
 use entangled_client::trust::{resolve, PersistenceIntent, TrustState, UserDecision};
 use entangled_client::{
     HistoryStore, IdentityStore, MemoryHistoryStore, MemoryIdentityStore, RetainedIdentity,
+    RetainedProvenance,
 };
 
 fn key(seed: u8) -> PublisherPubkey {
@@ -69,7 +70,7 @@ fn pin_then_reload_resolves_tofu_pinned() {
         retained,
         Some(RetainedIdentity {
             pubkey: k,
-            externally_verified: false
+            provenance: RetainedProvenance::Pinned
         })
     );
     let r2 = resolve(&k, retained.as_ref(), UserDecision::None);
@@ -110,8 +111,9 @@ fn tofu_then_pip_elevates_without_clobbering() {
         .unwrap();
 
     let retained = store.load_identity(&s).unwrap().unwrap();
-    assert!(
-        retained.externally_verified,
+    assert_eq!(
+        retained.provenance,
+        RetainedProvenance::ExternallyVerified,
         "re-pin must not demote a verified key"
     );
     let r = resolve(&k, Some(&retained), UserDecision::None);
@@ -137,7 +139,7 @@ fn pip_confirmed_replacement_survives_reload() {
         &k2,
         Some(&RetainedIdentity {
             pubkey: k1,
-            externally_verified: true,
+            provenance: RetainedProvenance::ExternallyVerified,
         }),
         UserDecision::ConfirmPip,
     );
@@ -201,5 +203,45 @@ fn missing_identity_is_first_contact() {
     assert_eq!(
         resolve(&k, None, UserDecision::None).state,
         TrustState::FirstContact
+    );
+}
+
+#[test]
+fn observation_record_never_overwrites_and_pin_upgrades() {
+    // The memory store honors the RecordObservation contract: create only
+    // when nothing is retained, never demote, and let a pin upgrade an
+    // observed-only record.
+    let store = MemoryIdentityStore::new();
+    let (k, s) = (key(7), site(7));
+    store
+        .apply(&s, &PersistenceIntent::RecordObservation { pubkey: k })
+        .unwrap();
+    assert_eq!(
+        store.load_identity(&s).unwrap().unwrap().provenance,
+        RetainedProvenance::Observed
+    );
+    // A second observation (any key) changes nothing.
+    let k2 = key(8);
+    store
+        .apply(&s, &PersistenceIntent::RecordObservation { pubkey: k2 })
+        .unwrap();
+    let r = store.load_identity(&s).unwrap().unwrap();
+    assert_eq!(r.pubkey, k);
+    assert_eq!(r.provenance, RetainedProvenance::Observed);
+    // An affirmative pin upgrades the observation.
+    store
+        .apply(&s, &PersistenceIntent::PinIdentity { pubkey: k })
+        .unwrap();
+    assert_eq!(
+        store.load_identity(&s).unwrap().unwrap().provenance,
+        RetainedProvenance::Pinned
+    );
+    // A later observation cannot demote the pin.
+    store
+        .apply(&s, &PersistenceIntent::RecordObservation { pubkey: k })
+        .unwrap();
+    assert_eq!(
+        store.load_identity(&s).unwrap().unwrap().provenance,
+        RetainedProvenance::Pinned
     );
 }

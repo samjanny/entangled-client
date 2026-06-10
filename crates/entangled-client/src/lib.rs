@@ -45,6 +45,6 @@ pub use io::{
 };
 pub use pipeline::{verify_content, verify_manifest, Outcome, VerifiedManifest};
 pub use trust::{
-    resolve, PersistenceIntent, RequiredAction, Resolution, RetainedIdentity, TrustState,
-    UserDecision,
+    resolve, trust_diagnostic, PersistenceIntent, RequiredAction, Resolution, RetainedIdentity,
+    RetainedProvenance, TrustState, UserDecision,
 };

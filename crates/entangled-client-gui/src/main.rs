@@ -404,14 +404,29 @@ impl App {
             }
             RequiredAction::None => (None, None),
         };
-        App {
+        let mut app = App {
             loaded,
             store,
             handoff: None,
             canary_override: false,
             pin_prompt,
             mismatch_prompt,
+        };
+        // Apply the load-time intent before any user decision: on a fresh
+        // first contact this is the automatic observation record of section
+        // 10:298, which must exist even if the user never answers the pin
+        // prompt, or a later identity change at this site would read as a new
+        // first contact instead of a mismatch. Persistence ordering (section
+        // 10:215) holds: `load` accepted the manifest before producing it.
+        let intent = app.loaded.initial_intent.clone();
+        if let Err(e) = app.persist(&intent) {
+            eprintln!("error: persisting first-contact observation: {e}");
         }
+        match app.store.identities.load_identity(&app.loaded.site) {
+            Ok(r) => app.loaded.retained = r,
+            Err(e) => eprintln!("error: reloading retained identity: {e}"),
+        }
+        app
     }
 
     /// Apply a user trust decision: re-resolve (updating chrome in memory), then
@@ -444,7 +459,8 @@ impl App {
         // resulting publisher; append its record for anti-downgrade continuity.
         let publisher = match intent {
             PersistenceIntent::None => return Ok(()),
-            PersistenceIntent::PinIdentity { pubkey }
+            PersistenceIntent::RecordObservation { pubkey }
+            | PersistenceIntent::PinIdentity { pubkey }
             | PersistenceIntent::MarkExternallyVerified { pubkey } => *pubkey,
             PersistenceIntent::ReplaceIdentity { new_pubkey, .. } => *new_pubkey,
         };

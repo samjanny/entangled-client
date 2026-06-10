@@ -27,7 +27,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use entangled_client::trust::{
-    resolve, trust_diagnostic, PersistenceIntent, RetainedIdentity, TrustState, UserDecision,
+    resolve, trust_diagnostic, PersistenceIntent, RetainedIdentity, RetainedProvenance, TrustState,
+    UserDecision,
 };
 use entangled_client::{verify_manifest, FixedClock, PublisherHistory};
 use entangled_core::types::manifest::OnionAddress;
@@ -120,13 +121,20 @@ fn corpus_trust_vectors_match_spec() {
         let presented = manifest.publisher_pubkey;
 
         // Seed what the vector says the client retained for this site, and the
-        // user's decision. The corpus retained record is a plain TOFU pin
-        // ("the same site was earlier pinned", corpus README).
+        // user's decision. context.retained_provenance selects the section 10
+        // retention flavor; absent means a plain TOFU pin (the 210/211 shape,
+        // "the same site was earlier pinned", corpus README).
+        let provenance = match ctx["retained_provenance"].as_str() {
+            None | Some("pinned") => RetainedProvenance::Pinned,
+            Some("observed") => RetainedProvenance::Observed,
+            Some("verified") => RetainedProvenance::ExternallyVerified,
+            Some(other) => panic!("unknown corpus retained_provenance: {other}"),
+        };
         let retained = ctx["retained_publisher_pubkey"]
             .as_str()
             .map(|s| RetainedIdentity {
                 pubkey: PublisherPubkey::try_from(s).expect("retained_publisher_pubkey"),
-                externally_verified: false,
+                provenance,
             });
         let decision = map_decision(ctx["user_decision"].as_str());
 
