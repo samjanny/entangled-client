@@ -189,6 +189,34 @@ fn animated_webp_rejected() {
 }
 
 #[test]
+fn animated_png_rejected() {
+    // APNG: an animated PNG must be rejected just like an animated WebP. The
+    // decoder reports animation for the declared media_type (acTL for png).
+    let body = b"png bytes";
+    let mut image = image_for(body, 2, 2);
+    image.media_type = ImageMediaType::Png;
+    let decoder = FakeDecoder {
+        result: Ok(Decoded {
+            width: 2,
+            height: 2,
+            animated: true,
+        }),
+    };
+    let outcome = verify_image(
+        &image,
+        body,
+        "image/png",
+        &decoder,
+        &mut ImageBudget::new(),
+        &mut NoRetrySet::new(),
+    );
+    assert_eq!(
+        outcome.diagnostic(),
+        Some(DiagnosticCode::WImageDecodeFailed)
+    );
+}
+
+#[test]
 fn dimension_mismatch_rejected() {
     let body = b"x";
     let image = image_for(body, 100, 100);

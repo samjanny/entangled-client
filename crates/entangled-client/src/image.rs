@@ -2,7 +2,7 @@
 //!
 //! Section 03 defines a strict, ordered pipeline for an `image` block's
 //! resource: the bytes are authenticated by hash before decoding, the declared
-//! `media_type` (png/jpeg/webp only - no SVG, no animated WebP) is authoritative
+//! `media_type` (png/jpeg/webp only - no SVG, no animated images: WebP or APNG) is authoritative
 //! for the decoder, decoded dimensions must match the declared ones, and a
 //! document-wide 16-megapixel budget bounds total decoded pixels. A failure at
 //! any step rejects only the image (never the containing document), and the
@@ -42,8 +42,10 @@ pub struct Decoded {
     pub width: u32,
     /// Decoded height in pixels.
     pub height: u32,
-    /// Whether the resource is animated (only meaningful for WebP; an animated
-    /// WebP is rejected).
+    /// Whether the resource is animated. Animation is forbidden for every
+    /// permitted `media_type`: an animated WebP or an animated PNG (APNG) is
+    /// rejected as `W_IMAGE_DECODE_FAILED`. The shell's decoder MUST set this
+    /// for an APNG (`acTL` chunk) under `image/png`, not only for WebP.
     pub animated: bool,
 }
 
@@ -56,11 +58,18 @@ pub struct DecodeError;
 /// The impure decode step, implemented by the shell.
 ///
 /// The implementation MUST select the decoder from the declared `media_type`
-/// (not the transport `Content-Type`), report the true decoded dimensions, and
-/// report whether a WebP is animated. A decode failure - including bytes that
-/// are valid for a different format than declared - is [`DecodeError`], which
-/// the policy turns into `W_IMAGE_DECODE_FAILED`. Decoding is unsafe-adjacent
-/// (hostile bytes can target decoder bugs); the implementation SHOULD use a
+/// (not the transport `Content-Type`) and report the true decoded dimensions.
+/// It MUST report `animated = true` for any animated resource under its declared
+/// `media_type` - an animated WebP or an animated PNG (APNG, signalled by an
+/// `acTL` chunk) - so the policy can reject it; animation detection is not
+/// WebP-only. To bound resource use (section 03 "Resource-exhaustion gate"), the
+/// implementation MUST read the pixel geometry from the container header and
+/// refuse to allocate a full surface beyond the section 03 limits (4096 by 4096,
+/// and the document pixel budget) before decoding, rather than allocating first
+/// and checking after. A decode failure - including bytes that are valid for a
+/// different format than declared - is [`DecodeError`], which the policy turns
+/// into `W_IMAGE_DECODE_FAILED`. Decoding is unsafe-adjacent (hostile bytes can
+/// target decoder bugs and decompression bombs); the implementation SHOULD use a
 /// memory-safe or sandboxed decoder (section 03 "Decoder safety").
 pub trait Decoder {
     /// Decode `bytes` as `media_type`, reporting dimensions and animation.
@@ -226,8 +235,8 @@ fn run_checks(
         Ok(d) => d,
         Err(DecodeError) => return ImageOutcome::Reject(DiagnosticCode::WImageDecodeFailed),
     };
-    // Step 7: an animated WebP is a decode failure.
-    if image.media_type == ImageMediaType::Webp && decoded.animated {
+    // Step 7: an animated resource (animated WebP or APNG) is a decode failure.
+    if decoded.animated {
         return ImageOutcome::Reject(DiagnosticCode::WImageDecodeFailed);
     }
     // Step 8: decoded dimensions vs declared.
