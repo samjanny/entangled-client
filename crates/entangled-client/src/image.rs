@@ -211,6 +211,20 @@ pub fn verify_image(
     outcome
 }
 
+/// Report a fetch-level failure for an image resource (section 03 step 2).
+///
+/// Per section 09 a non-`200` status on an image resource fetch, a timeout,
+/// or any other transport-level failure is image-resource unavailable:
+/// `W_IMAGE_FETCH_FAILED`, without running steps 3-9 (`verify_image` is not
+/// called). The failed triple is recorded in `no_retry`, so the same `src`
+/// is not refetched for this block within the rendering session (section
+/// 03's no-refetch rule applies to fetch failures exactly as to
+/// verification failures).
+pub fn fetch_failed(image: &ImageRef, no_retry: &mut NoRetrySet) -> ImageOutcome {
+    no_retry.record(image);
+    ImageOutcome::Reject(DiagnosticCode::WImageFetchFailed)
+}
+
 fn run_checks(
     image: &ImageRef,
     body: &[u8],

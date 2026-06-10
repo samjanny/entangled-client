@@ -1,12 +1,15 @@
 //! Corpus-driven conformance for the section 03 image resource layer.
 //!
 //! Runs every corpus vector carrying `expected.image_outcomes` (the image
-//! tranche, 240-245) through this crate's `verify_image` pipeline and asserts
-//! the per-image outcome against the recorded expectation. This is the
-//! client-side counterpart of the verifier conformance suites in
-//! entangled-api and entangled-api-java, which skip these vectors as out of
-//! scope: the image layer belongs to the client, so the client is where the
-//! vectors are driven.
+//! tranche, 240-245, plus rc.54's fetch-failure vector 269) through this
+//! crate's `verify_image` pipeline and asserts the per-image outcome against
+//! the recorded expectation. A response entry carrying a non-200 `status`
+//! (absent means 200) is a fetch-level failure: the harness reports it via
+//! `fetch_failed` without running the §03 steps, per §09 and the corpus
+//! contract. This is the client-side counterpart of the verifier conformance
+//! suites in entangled-api and entangled-api-java, which skip these vectors
+//! as out of scope: the image layer belongs to the client, so the client is
+//! where the vectors are driven.
 //!
 //! The decoder used here is a header-level PNG reader: it validates the PNG
 //! signature and chunk framing, takes the geometry from IHDR, and reports
@@ -24,7 +27,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use entangled_client::image::{
-    verify_image, DecodeError, Decoded, Decoder, ImageBudget, NoRetrySet,
+    fetch_failed, verify_image, DecodeError, Decoded, Decoder, ImageBudget, NoRetrySet,
 };
 use entangled_core::document::parser::parse_and_verify_content;
 use entangled_core::types::{ImageMediaType, RuntimePubkey};
@@ -221,17 +224,27 @@ fn corpus_image_vectors_match_spec() {
             .zip(outcomes.iter())
             .enumerate()
         {
-            let body = fs::read(root.join(response["file"].as_str().expect("file")))
-                .expect("read image response body");
-            let content_type = response["content_type"].as_str().expect("content_type");
-            let outcome = verify_image(
-                image,
-                &body,
-                content_type,
-                &PngHeaderDecoder,
-                &mut budget,
-                &mut no_retry,
-            );
+            // A non-200 fetch status (absent means 200) is a step-2 failure:
+            // reported via fetch_failed, §03 steps 3-9 not run.
+            let status = response
+                .get("status")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(200);
+            let outcome = if status != 200 {
+                fetch_failed(image, &mut no_retry)
+            } else {
+                let body = fs::read(root.join(response["file"].as_str().expect("file")))
+                    .expect("read image response body");
+                let content_type = response["content_type"].as_str().expect("content_type");
+                verify_image(
+                    image,
+                    &body,
+                    content_type,
+                    &PngHeaderDecoder,
+                    &mut budget,
+                    &mut no_retry,
+                )
+            };
             let got = match outcome.diagnostic() {
                 None => "accept".to_owned(),
                 Some(code) => serde_json::to_value(code)
@@ -249,8 +262,9 @@ fn corpus_image_vectors_match_spec() {
     }
 
     assert!(
-        driven >= 6,
-        "expected at least the six rc.52 image vectors; drove {driven}"
+        driven >= 7,
+        "expected at least the seven image vectors (rc.52's six plus rc.54's \
+         269); drove {driven}"
     );
     assert!(
         failures.is_empty(),

@@ -10,7 +10,7 @@ use entangled_core::validation::DiagnosticCode;
 use entangled_engine::ImageRef;
 
 use entangled_client::image::{
-    verify_image, DecodeError, Decoded, Decoder, ImageBudget, NoRetrySet,
+    fetch_failed, verify_image, DecodeError, Decoded, Decoder, ImageBudget, NoRetrySet,
 };
 
 /// A decoder that returns a fixed result, for testing the policy around it.
@@ -294,4 +294,32 @@ fn failed_triple_is_not_retried() {
         &mut no_retry,
     );
     assert!(!second.is_accepted());
+}
+
+#[test]
+fn fetch_failure_is_reported_and_not_retried() {
+    let body = b"never delivered";
+    let image = image_for(body, 1, 1);
+    let mut no_retry = NoRetrySet::new();
+
+    // Step 2 failed (non-200 status, timeout, ...): the caller reports it
+    // without running steps 3-9.
+    let outcome = fetch_failed(&image, &mut no_retry);
+    assert_eq!(
+        outcome.diagnostic(),
+        Some(DiagnosticCode::WImageFetchFailed)
+    );
+
+    // The failed triple is recorded: a later attempt within the session is
+    // short-circuited even if the resource would now verify.
+    assert!(no_retry.contains(&image));
+    let retry = verify_image(
+        &image,
+        body,
+        "image/png",
+        &ok_decoder(1, 1),
+        &mut ImageBudget::new(),
+        &mut no_retry,
+    );
+    assert!(!retry.is_accepted());
 }
