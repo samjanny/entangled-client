@@ -33,8 +33,12 @@ verifier primitives  Scene IR + lowering  -> pure brain + (later) egui shell
 - `crates/entangled-client` - the pure brain. The section 10 validation-pipeline
   driver and the I/O seams (traits) a shell implements. No I/O, no toolkit,
   `#![forbid(unsafe_code)]`.
-- `crates/entangled-client-gui` *(later tranche)* - the eframe/egui shell that
-  implements the traits and renders the chrome and content.
+- `crates/entangled-client-gui` - the eframe/egui shell: renders a verified
+  document's content (Scene) and the chrome. Read-only viewer for now; not yet
+  a conforming client.
+- `crates/entangled-client-store` - filesystem-backed `IdentityStore` /
+  `HistoryStore` implementations of the brain's persistence seams, with
+  authenticated integrity by default and optional passphrase encryption.
 - `crates/entangled-transport-tor` *(later tranche)* - the Tor transport behind
   the client's `Transport` trait.
 
@@ -42,12 +46,15 @@ verifier primitives  Scene IR + lowering  -> pure brain + (later) egui shell
 
 Built in tranches, each a shippable increment toward full section 10 conformance:
 
-1. **Pipeline driver** (this tranche): sequence the core's verification chain in
+1. **Pipeline driver** *(done)*: sequence the core's verification chain in
    section 10 order; report a structured outcome under section 11 error
    precedence. Pure, no I/O.
-2. Anti-downgrade / canary-conflict / runtime-rotation history.
-3. Stage 7 trust-state machine + PIP + chrome model; the egui shell.
+2. Anti-downgrade / canary-conflict / runtime-rotation history. *(done)*
+3. Stage 7 trust-state machine + PIP + chrome model; the egui shell. *(done;
+   three-flavor retention per section 10:298, corpus trust vectors 210-215)*
 4. Images (hash-verify-before-decode, media-type allowlist, pixel budget).
+   *(policy layer done and corpus-driven, vectors 240-245 and 269; the shell's
+   real pixel decoder is the open item)*
 5. Transport (Tor) behind the `Transport` trait.
 6. Forms and submit.
 7. State and consent (section 07).
