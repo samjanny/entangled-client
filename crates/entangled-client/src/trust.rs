@@ -26,6 +26,7 @@
 //! decision from an affirmative control; this module never assumes it.
 
 use entangled_core::types::PublisherPubkey;
+use entangled_core::validation::DiagnosticCode;
 
 /// The four mutually exclusive publisher trust states (section 10).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,6 +72,11 @@ pub enum UserDecision {
     /// In Changed/mismatch, the user confirmed the new key as legitimate,
     /// replacing the retained identity.
     ConfirmNewIdentity,
+    /// In Changed/mismatch, the user explicitly rejected the presented
+    /// identity, abandoning the navigation and preserving the retained
+    /// identity (section 10 "abandon the site, preserving the existing
+    /// retained identity"). Surfaced as `E_TRUST_USER_REJECTED` (section 11).
+    RejectNewIdentity,
 }
 
 /// The user action the chrome must demand for this state, if any. The chrome
@@ -177,11 +183,13 @@ fn first_contact(presented: &PublisherPubkey, decision: UserDecision) -> Resolut
         },
         // No decision (or a decision that does not apply here): remain First
         // contact, show the pinning prompt, persist nothing. No passive pin.
-        UserDecision::None | UserDecision::ConfirmNewIdentity => Resolution {
-            state: TrustState::FirstContact,
-            action: RequiredAction::PinPrompt,
-            intent: PersistenceIntent::None,
-        },
+        UserDecision::None | UserDecision::ConfirmNewIdentity | UserDecision::RejectNewIdentity => {
+            Resolution {
+                state: TrustState::FirstContact,
+                action: RequiredAction::PinPrompt,
+                intent: PersistenceIntent::None,
+            }
+        }
     }
 }
 
@@ -245,12 +253,69 @@ fn mismatch(
                 externally_verified: true,
             },
         },
+        // The user explicitly rejected the presented identity: the mismatch is
+        // resolved by abandoning the navigation. The retained identity is
+        // preserved untouched; no further prompt is required because the user
+        // has already acted on the resolution control. The section 11
+        // diagnostic for this outcome is E_TRUST_USER_REJECTED (see
+        // [`trust_diagnostic`]).
+        UserDecision::RejectNewIdentity => Resolution {
+            state: TrustState::ChangedMismatch,
+            action: RequiredAction::None,
+            intent: PersistenceIntent::None,
+        },
         // No confirmation: stay Changed/mismatch, warn prominently, and - the
         // load-bearing MUST - never replace the retained identity.
         UserDecision::None | UserDecision::PinFirstContact => Resolution {
             state: TrustState::ChangedMismatch,
             action: RequiredAction::MismatchWarning,
             intent: PersistenceIntent::None,
+        },
+    }
+}
+
+/// Map a [`Resolution`] (and the [`UserDecision`] that produced it) to the
+/// section 11 trust diagnostic it surfaces, if any.
+///
+/// The Stage 6 manifest identity pre-check errors (section 10: detected before
+/// signature verification, taking precedence over `E_SIG_VERIFICATION`):
+///
+/// - an unresolved Changed/mismatch is `E_TRUST_MISMATCH`;
+/// - a mismatch the user resolved by explicitly rejecting the presented
+///   identity is `E_TRUST_USER_REJECTED`.
+///
+/// The Stage 7 info codes mark transitions and observations, not steady
+/// states:
+///
+/// - `I_TRUST_FIRST_CONTACT` for a first-contact resolution of a previously
+///   unknown publisher identity, including the fresh first contact produced by
+///   a user-confirmed identity replacement;
+/// - `I_TRUST_TOFU_PINNED` when an explicit user decision pins the identity;
+/// - `I_TRUST_VERIFIED` when the user externally verifies the key against its
+///   PIP, whether from first contact, from a TOFU pin, or while resolving a
+///   mismatch.
+///
+/// A resolution that changes nothing - a retained identity matching the
+/// presented key with no elevating decision - surfaces no diagnostic.
+pub fn trust_diagnostic(resolution: &Resolution, decision: UserDecision) -> Option<DiagnosticCode> {
+    match resolution.state {
+        TrustState::ChangedMismatch => Some(if decision == UserDecision::RejectNewIdentity {
+            DiagnosticCode::ETrustUserRejected
+        } else {
+            DiagnosticCode::ETrustMismatch
+        }),
+        TrustState::FirstContact => Some(DiagnosticCode::ITrustFirstContact),
+        TrustState::TofuPinned => match resolution.intent {
+            PersistenceIntent::PinIdentity { .. } => Some(DiagnosticCode::ITrustTofuPinned),
+            _ => None,
+        },
+        TrustState::ExternallyVerified => match resolution.intent {
+            PersistenceIntent::MarkExternallyVerified { .. }
+            | PersistenceIntent::ReplaceIdentity {
+                externally_verified: true,
+                ..
+            } => Some(DiagnosticCode::ITrustVerified),
+            _ => None,
         },
     }
 }

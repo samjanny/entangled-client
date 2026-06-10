@@ -7,9 +7,11 @@
 
 use entangled_core::crypto::PublisherSigningKey;
 use entangled_core::types::PublisherPubkey;
+use entangled_core::validation::DiagnosticCode;
 
 use entangled_client::trust::{
-    resolve, PersistenceIntent, RequiredAction, RetainedIdentity, TrustState, UserDecision,
+    resolve, trust_diagnostic, PersistenceIntent, RequiredAction, RetainedIdentity, TrustState,
+    UserDecision,
 };
 
 fn key(seed: u8) -> PublisherPubkey {
@@ -161,4 +163,59 @@ fn pip_confirmed_replacement_is_not_downgraded_next_session() {
         TrustState::ExternallyVerified,
         "a PIP-confirmed replacement must not silently downgrade to TofuPinned"
     );
+}
+
+#[test]
+fn explicit_rejection_preserves_retained_identity() {
+    // The user explicitly rejects the presented identity during mismatch
+    // resolution: the retained identity stays untouched, no further prompt is
+    // required (the user already acted), and the section 11 outcome is
+    // E_TRUST_USER_REJECTED rather than the unresolved-mismatch code.
+    let r = resolve(&key(2), Some(&pinned(1)), UserDecision::RejectNewIdentity);
+    assert_eq!(r.state, TrustState::ChangedMismatch);
+    assert_eq!(r.action, RequiredAction::None);
+    assert_eq!(r.intent, PersistenceIntent::None);
+    assert_eq!(
+        trust_diagnostic(&r, UserDecision::RejectNewIdentity),
+        Some(DiagnosticCode::ETrustUserRejected)
+    );
+}
+
+#[test]
+fn trust_diagnostics_map_per_section_11() {
+    // Unresolved mismatch -> E_TRUST_MISMATCH.
+    let mismatch = resolve(&key(2), Some(&pinned(1)), UserDecision::None);
+    assert_eq!(
+        trust_diagnostic(&mismatch, UserDecision::None),
+        Some(DiagnosticCode::ETrustMismatch)
+    );
+    // First contact (no decision) -> I_TRUST_FIRST_CONTACT.
+    let first = resolve(&key(1), None, UserDecision::None);
+    assert_eq!(
+        trust_diagnostic(&first, UserDecision::None),
+        Some(DiagnosticCode::ITrustFirstContact)
+    );
+    // Affirmative pin -> I_TRUST_TOFU_PINNED.
+    let pin = resolve(&key(1), None, UserDecision::PinFirstContact);
+    assert_eq!(
+        trust_diagnostic(&pin, UserDecision::PinFirstContact),
+        Some(DiagnosticCode::ITrustTofuPinned)
+    );
+    // PIP confirmation -> I_TRUST_VERIFIED, from first contact and from a pin.
+    let pip_first = resolve(&key(1), None, UserDecision::ConfirmPip);
+    assert_eq!(
+        trust_diagnostic(&pip_first, UserDecision::ConfirmPip),
+        Some(DiagnosticCode::ITrustVerified)
+    );
+    let pip_elevate = resolve(&key(1), Some(&pinned(1)), UserDecision::ConfirmPip);
+    assert_eq!(
+        trust_diagnostic(&pip_elevate, UserDecision::ConfirmPip),
+        Some(DiagnosticCode::ITrustVerified)
+    );
+    // Steady states surface no event: a matching pin or verified key with no
+    // elevating decision.
+    let steady_pin = resolve(&key(1), Some(&pinned(1)), UserDecision::None);
+    assert_eq!(trust_diagnostic(&steady_pin, UserDecision::None), None);
+    let steady_verified = resolve(&key(1), Some(&verified(1)), UserDecision::None);
+    assert_eq!(trust_diagnostic(&steady_verified, UserDecision::None), None);
 }
