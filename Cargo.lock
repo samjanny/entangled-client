@@ -1141,7 +1141,7 @@ checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
 
 [[package]]
 name = "entangled-client"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "data-encoding",
  "entangled-core",
@@ -1152,7 +1152,7 @@ dependencies = [
 
 [[package]]
 name = "entangled-client-gui"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "data-encoding",
  "directories",
@@ -1170,7 +1170,7 @@ dependencies = [
 
 [[package]]
 name = "entangled-client-store"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "argon2",
  "chacha20poly1305",

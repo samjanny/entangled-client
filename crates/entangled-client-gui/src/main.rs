@@ -508,7 +508,7 @@ fn chrome_frame() -> egui::Frame {
         .fill(egui::Color32::from_rgb(0x1c, 0x22, 0x2c))
         .inner_margin(egui::Margin::symmetric(12.0, 8.0))
         .stroke(egui::Stroke::new(
-            1.0,
+            1.0_f32,
             egui::Color32::from_rgb(0x3a, 0x44, 0x52),
         ))
 }
@@ -671,7 +671,7 @@ impl App {
                     .rounding(egui::Rounding::same(6.0))
                     .inner_margin(egui::Margin::symmetric(10.0, 7.0))
                     .stroke(egui::Stroke::new(
-                        1.0,
+                        1.0_f32,
                         egui::Color32::from_rgb(0x2c, 0x34, 0x42),
                     ))
                     .show(ui, |ui| {
@@ -875,7 +875,7 @@ fn action_frame(severity: Severity) -> egui::Frame {
         .rounding(egui::Rounding::same(6.0))
         .inner_margin(egui::Margin::symmetric(12.0, 10.0))
         .stroke(egui::Stroke::new(
-            1.0,
+            1.0_f32,
             severity.accent().gamma_multiply(0.6),
         ))
         .outer_margin(egui::Margin {
@@ -892,7 +892,7 @@ fn pip_chip(ui: &mut egui::Ui, label: &str, pip: &str) {
         .rounding(egui::Rounding::same(6.0))
         .inner_margin(egui::Margin::symmetric(10.0, 8.0))
         .stroke(egui::Stroke::new(
-            1.0,
+            1.0_f32,
             egui::Color32::from_rgb(0x2c, 0x34, 0x42),
         ))
         .show(ui, |ui| {
@@ -975,7 +975,7 @@ fn status_pill(
         .rounding(egui::Rounding::same(999.0)) // fully rounded -> pill
         .inner_margin(egui::Margin::symmetric(10.0, 5.0))
         .stroke(egui::Stroke::new(
-            1.0,
+            1.0_f32,
             severity.accent().gamma_multiply(0.5),
         ))
         .show(ui, |ui| {
@@ -1028,7 +1028,7 @@ fn draw_chrome(ui: &mut egui::Ui, chrome: &ChromeView) {
             .rounding(egui::Rounding::same(6.0))
             .inner_margin(egui::Margin::symmetric(10.0, 5.0))
             .stroke(egui::Stroke::new(
-                1.0,
+                1.0_f32,
                 egui::Color32::from_rgb(0x2c, 0x34, 0x42),
             ))
             .show(ui, |ui| {
@@ -1079,7 +1079,7 @@ fn draw_pip_card(ui: &mut egui::Ui, chrome: &ChromeView) {
     let (left, right) = (ui.max_rect().left(), ui.max_rect().right());
     ui.painter().line_segment(
         [egui::pos2(left, sep_y), egui::pos2(right, sep_y)],
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(0x2c, 0x34, 0x42)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(0x2c, 0x34, 0x42)),
     );
     ui.add_space(8.0);
 
@@ -1142,7 +1142,7 @@ fn draw_warning_banner(ui: &mut egui::Ui, warning: Warning) {
         .rounding(egui::Rounding::same(6.0))
         .inner_margin(egui::Margin::symmetric(10.0, 7.0))
         .stroke(egui::Stroke::new(
-            1.0,
+            1.0_f32,
             severity.accent().gamma_multiply(0.6),
         ))
         .show(ui, |ui| {
@@ -1199,7 +1199,7 @@ fn draw_canary_block(ui: &mut egui::Ui) -> bool {
         .fill(egui::Color32::from_rgb(0x20, 0x18, 0x14))
         .rounding(egui::Rounding::same(8.0))
         .stroke(egui::Stroke::new(
-            1.0,
+            1.0_f32,
             Severity::Alert.accent().gamma_multiply(0.6),
         ))
         .inner_margin(egui::Margin::same(16.0))
@@ -1253,7 +1253,7 @@ fn draw_override_active_notice(ui: &mut egui::Ui) {
         .rounding(egui::Rounding::same(6.0))
         .inner_margin(egui::Margin::symmetric(10.0, 7.0))
         .stroke(egui::Stroke::new(
-            1.0,
+            1.0_f32,
             Severity::Caution.accent().gamma_multiply(0.6),
         ))
         .show(ui, |ui| {
@@ -1410,7 +1410,7 @@ fn draw_node(ui: &mut egui::Ui, node: &SceneNode, handoff: &mut Option<Handoff>)
             let mut job = runs_job(label, BODY, egui::Color32::from_rgb(0x6c, 0xa8, 0xff));
             job.sections
                 .iter_mut()
-                .for_each(|s| s.format.underline = egui::Stroke::new(1.0, s.format.color));
+                .for_each(|s| s.format.underline = egui::Stroke::new(1.0_f32, s.format.color));
             match external_handoff(link) {
                 // Citation/carrier links are clickable but never auto-navigate:
                 // a click requests the handoff dialog (section 03). Carrier and
@@ -1550,10 +1550,10 @@ fn runs_job(
             ..Default::default()
         };
         if style.strikethrough {
-            fmt.strikethrough = egui::Stroke::new(1.0, color);
+            fmt.strikethrough = egui::Stroke::new(1.0_f32, color);
         }
         if is_link {
-            fmt.underline = egui::Stroke::new(1.0, color);
+            fmt.underline = egui::Stroke::new(1.0_f32, color);
         }
         job.append(&isolate_publisher_text(text), 0.0, fmt);
     }

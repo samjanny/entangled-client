@@ -9,7 +9,7 @@ a full section 10 client with an eventual egui GUI.
 
 The protocol specification lives at [github.com/samjanny/entangled](https://github.com/samjanny/entangled).
 
-Version 0.1.1 is aligned with spec `v1.0-rc.64` and `entangled-core`
+Version 0.1.2 is aligned with spec `v1.0-rc.64` and `entangled-core`
 `v0.10.1`. The GUI applies the §04 bidi-isolation fallback to every displayed
 publisher value. Transport and origin migration remain later tranches: this
 client already keys anti-downgrade history globally by publisher, and therefore
