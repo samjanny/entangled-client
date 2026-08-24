@@ -184,6 +184,35 @@ fn bold_family() -> egui::FontFamily {
     egui::FontFamily::Name("bold".into())
 }
 
+/// Prepare one publisher-controlled value for egui's plain-text renderer.
+///
+/// egui does not expose a structural sibling-isolation primitive. Follow the
+/// §04 fallback exactly: make every Unicode 15.0 `Bidi_Control` visible before
+/// adding an FSI/PDI boundary. Escaping first is essential because an embedded
+/// PDI could otherwise terminate the boundary early.
+fn isolate_publisher_text(value: &str) -> String {
+    use std::fmt::Write as _;
+
+    let mut isolated = String::with_capacity(value.len() + 2);
+    isolated.push('\u{2068}');
+    for ch in value.chars() {
+        if is_bidi_control(ch) {
+            write!(isolated, "<U+{:04X}>", ch as u32).expect("writing to String cannot fail");
+        } else {
+            isolated.push(ch);
+        }
+    }
+    isolated.push('\u{2069}');
+    isolated
+}
+
+fn is_bidi_control(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
+}
+
 /// Install the embedded DejaVu fonts: DejaVu Sans as the proportional default,
 /// DejaVu Sans Mono as the monospace family, and DejaVu Sans Bold under a named
 /// "bold" family so bold runs render with a real bold weight.
@@ -649,7 +678,7 @@ impl App {
                         ui.set_min_width(ui.available_width());
                         ui.add(
                             egui::Label::new(
-                                egui::RichText::new(&url)
+                                egui::RichText::new(isolate_publisher_text(&url))
                                     .monospace()
                                     .color(egui::Color32::from_rgb(0x9a, 0xB0, 0xC8)),
                             )
@@ -877,7 +906,7 @@ fn pip_chip(ui: &mut egui::Ui, label: &str, pip: &str) {
             ui.add_space(4.0);
             ui.add(
                 egui::Label::new(
-                    egui::RichText::new(pip)
+                    egui::RichText::new(isolate_publisher_text(pip))
                         .monospace()
                         .size(14.0)
                         .color(egui::Color32::from_rgb(0xE8, 0xEC, 0xF2)),
@@ -1004,7 +1033,7 @@ fn draw_chrome(ui: &mut egui::Ui, chrome: &ChromeView) {
             ))
             .show(ui, |ui| {
                 ui.label(
-                    egui::RichText::new(&chrome.carrier_address_compact)
+                    egui::RichText::new(isolate_publisher_text(&chrome.carrier_address_compact))
                         .monospace()
                         .size(12.5)
                         .color(egui::Color32::from_rgb(0x9a, 0xB0, 0xC8)),
@@ -1077,7 +1106,7 @@ fn draw_pip_card(ui: &mut egui::Ui, chrome: &ChromeView) {
     ui.add_space(6.0);
 
     let pip_text = || {
-        egui::RichText::new(&chrome.pip)
+        egui::RichText::new(isolate_publisher_text(&chrome.pip))
             .monospace()
             .size(15.0)
             .color(egui::Color32::from_rgb(0xE8, 0xEC, 0xF2))
@@ -1296,7 +1325,7 @@ fn draw_node(ui: &mut egui::Ui, node: &SceneNode, handoff: &mut Option<Handoff>)
                     ui.set_min_width(ui.available_width());
                     ui.add(
                         egui::Label::new(
-                            egui::RichText::new(text)
+                            egui::RichText::new(isolate_publisher_text(text))
                                 .monospace()
                                 .size(BODY - 1.0)
                                 .color(body_color),
@@ -1354,11 +1383,6 @@ fn draw_node(ui: &mut egui::Ui, node: &SceneNode, handoff: &mut Option<Handoff>)
         }
         SceneNode::Image { image } => {
             // Images are not fetched in this tranche; show a placeholder.
-            let alt = if image.alt.is_empty() {
-                "image".to_owned()
-            } else {
-                image.alt.clone()
-            };
             egui::Frame::none()
                 .fill(egui::Color32::from_rgb(0x16, 0x1a, 0x20))
                 .rounding(egui::Rounding::same(6.0))
@@ -1366,9 +1390,18 @@ fn draw_node(ui: &mut egui::Ui, node: &SceneNode, handoff: &mut Option<Handoff>)
                 .show(ui, |ui| {
                     // Span the full content column, like the code block.
                     ui.set_min_width(ui.available_width());
-                    ui.label(egui::RichText::new(format!("[image: {alt}]")).color(muted));
+                    let display = if image.alt.is_empty() {
+                        "[image]".to_owned()
+                    } else {
+                        format!("[image: {}]", isolate_publisher_text(&image.alt))
+                    };
+                    ui.label(egui::RichText::new(display).color(muted));
                     if let Some(caption) = &image.caption {
-                        ui.label(egui::RichText::new(caption).size(BODY - 2.0).color(muted));
+                        ui.label(
+                            egui::RichText::new(isolate_publisher_text(caption))
+                                .size(BODY - 2.0)
+                                .color(muted),
+                        );
                     }
                 });
             ui.add_space(12.0);
@@ -1441,7 +1474,7 @@ fn draw_node(ui: &mut egui::Ui, node: &SceneNode, handoff: &mut Option<Handoff>)
             }
             ui.add_space(4.0);
             ui.label(
-                egui::RichText::new(format!("[ {submit_label} ]"))
+                egui::RichText::new(format!("[ {} ]", isolate_publisher_text(submit_label)))
                     .size(BODY)
                     .color(body_color),
             );
@@ -1465,7 +1498,7 @@ fn draw_node(ui: &mut egui::Ui, node: &SceneNode, handoff: &mut Option<Handoff>)
                     ui.set_min_width(ui.available_width());
                     if let Some(t) = title {
                         ui.label(
-                            egui::RichText::new(t)
+                            egui::RichText::new(isolate_publisher_text(t))
                                 .size(BODY)
                                 .strong()
                                 .color(egui::Color32::from_rgb(0xF0, 0xF2, 0xF5)),
@@ -1522,7 +1555,7 @@ fn runs_job(
         if is_link {
             fmt.underline = egui::Stroke::new(1.0, color);
         }
-        job.append(text, 0.0, fmt);
+        job.append(&isolate_publisher_text(text), 0.0, fmt);
     }
     job
 }
@@ -1533,8 +1566,9 @@ fn runs_text(runs: &[InlineRun]) -> String {
     let mut s = String::new();
     for run in runs {
         match run {
-            InlineRun::Text { text, .. } => s.push_str(text),
-            InlineRun::Link { text, .. } => s.push_str(text),
+            InlineRun::Text { text, .. } | InlineRun::Link { text, .. } => {
+                s.push_str(&isolate_publisher_text(text));
+            }
         }
     }
     s
@@ -1568,13 +1602,43 @@ fn field_label(field: &entangled_engine::FormFieldView) -> String {
         F::Select { label, .. } => ("select", label),
         F::Checkbox { label, .. } => ("checkbox", label),
     };
-    format!("[{kind}] {label}")
+    format!("[{kind}] {}", isolate_publisher_text(label))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use entangled_engine::LinkRef;
+
+    // --- §04: bidi isolation for every displayed publisher value ---
+
+    #[test]
+    fn bidi_controls_are_escaped_before_the_isolation_boundary() {
+        let value = "alpha\u{202E}override\u{2069}\u{202D}omega";
+        assert_eq!(
+            isolate_publisher_text(value),
+            "\u{2068}alpha<U+202E>override<U+2069><U+202D>omega\u{2069}"
+        );
+    }
+
+    #[test]
+    fn every_unicode_15_bidi_control_is_made_visible() {
+        let controls = [
+            '\u{061C}', '\u{200E}', '\u{200F}', '\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}',
+            '\u{202E}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
+        ];
+        let value: String = controls.into_iter().collect();
+        assert_eq!(
+            isolate_publisher_text(&value),
+            "\u{2068}<U+061C><U+200E><U+200F><U+202A><U+202B><U+202C><U+202D>\
+             <U+202E><U+2066><U+2067><U+2068><U+2069>\u{2069}"
+        );
+    }
+
+    #[test]
+    fn natural_right_to_left_text_is_preserved_inside_first_strong_isolation() {
+        assert_eq!(isolate_publisher_text("مرحبا"), "\u{2068}مرحبا\u{2069}");
+    }
 
     // --- H-1: Expired-canary render-block gating (§08:185 / §10:211) ---
 

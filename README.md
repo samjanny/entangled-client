@@ -9,6 +9,13 @@ a full section 10 client with an eventual egui GUI.
 
 The protocol specification lives at [github.com/samjanny/entangled](https://github.com/samjanny/entangled).
 
+Version 0.1.1 is aligned with spec `v1.0-rc.64` and `entangled-core`
+`v0.10.1`. The GUI applies the §04 bidi-isolation fallback to every displayed
+publisher value. Transport and origin migration remain later tranches: this
+client already keys anti-downgrade history globally by publisher, and therefore
+does not support simultaneous multi-origin publication, as required by the v1
+scope reduction in §00/§06.
+
 ## Why this exists
 
 [`entangled-core`](https://github.com/samjanny/entangled-api) is a verifier: it
@@ -55,10 +62,12 @@ Built in tranches, each a shippable increment toward full section 10 conformance
 4. Images (hash-verify-before-decode, media-type allowlist, pixel budget).
    *(policy layer done and corpus-driven, vectors 240-245 and 269; the shell's
    real pixel decoder is the open item)*
-5. Transport (Tor) behind the `Transport` trait.
+5. Transport (Tor) behind the `Transport` trait, including rc.64's parsed,
+   case-insensitive vendor media-type checks.
 6. Forms and submit.
 7. State and consent (section 07).
-8. Historical content, origin migration, reduced modes; full section 10 audit.
+8. Historical content, origin migration (including isolated provisional
+   successor history), reduced modes, and `T_lower`; full section 10 audit.
 
 Transport (Tor), filesystem persistence, and image decode all sit behind traits,
 so the brain stays testable without any of them.
